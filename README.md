@@ -315,7 +315,10 @@ northstar bench
 | Human escalation rate | 0% | 8% |
 | Task completion rate | 100% | 100% |
 | Detection latency (steps) | 0.0 | 0.0 |
-| Runtime overhead (s/step) | 0.0023 | 0.0356 |
+| Runtime overhead (s/step) | 0.0001 | 0.0033 |
+
+<sub>Reproduced by CI on every commit (ubuntu-latest, Python 3.12). Overhead is
+roughly 10× higher on Windows — it is dominated by filesystem walks.</sub>
 
 Read the second row, then the first. **Silent drift goes to zero** — nothing reaches
 the final tree unannounced. But the violation rate only falls to 42%, and that is not
@@ -358,9 +361,16 @@ pip install -e ".[dev]"
 pytest --cov=northstar --cov-report=term-missing
 ```
 
-288 tests, 98% coverage, enforced at 95% in `pyproject.toml`.
+290 tests, 98% coverage, enforced at 95% in `pyproject.toml`. CI runs the suite on
+Ubuntu and Windows across Python 3.11–3.13, and **re-runs the benchmark on every
+commit** — if silent drift stops being 0% or false blocks appear, the build fails.
+Published numbers that are not re-verified are marketing.
+
 `tests/test_drift_scenarios.py` drives ten ways an agent silently stops obeying you,
 end-to-end through the same hook a real agent hits.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the one rule that governs new checks, and
+[ROADMAP.md](ROADMAP.md) for what is deliberately deferred and why.
 
 ## License
 

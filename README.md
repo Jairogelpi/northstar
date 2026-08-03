@@ -1,5 +1,11 @@
 # Northstar
 
+[![CI](https://github.com/Jairogelpi/northstar/actions/workflows/ci.yml/badge.svg)](https://github.com/Jairogelpi/northstar/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)](https://github.com/Jairogelpi/northstar/blob/main/pyproject.toml)
+[![Silent drift](https://img.shields.io/badge/silent%20drift-0%25-brightgreen)](#intentdriftbench)
+[![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)](https://github.com/Jairogelpi/northstar/blob/main/pyproject.toml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
 **Executable intent contracts for coding agents.**
 
 > Coding agents remember your prompt. Northstar verifies that their actions still obey it.

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # Coverage is gated at 95% in pyproject.toml, so this fails the build on its own.
+      - name: Test
+        run: pytest --cov=northstar --cov-report=term-missing
+
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+
+      # The published numbers have to survive every commit, or they are marketing.
+      - name: IntentDriftBench
+        run: |
+          northstar bench | tee bench.md
+          python - <<'EOF'
+          import json, subprocess, sys
+          report = json.loads(subprocess.run(
+              ["northstar", "bench", "--json"], capture_output=True, text=True, check=True
+          ).stdout)
+          arm = report["arms"]["with_runtime"]
+          assert arm["silent_drift_rate"] == 0.0, arm
+          assert arm["false_block_rate"] == 0.0, arm
+          assert arm["task_completion_rate"] >= 0.9, arm
+          print("benchmark holds:", arm)
+          EOF
+
+      - name: Publish the table in the job summary
+        run: cat bench.md >> "$GITHUB_STEP_SUMMARY"

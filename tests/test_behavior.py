@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import subprocess
+import os
 from pathlib import Path
 
 import pytest
@@ -113,6 +113,25 @@ def test_capture_reports_a_timeout(tmp_path: Path):
     run = capture(tmp_path, ["python", "-c", "import time; time.sleep(5)"], timeout=1)
     assert not run.usable
     assert "exceeded 1s" in run.error
+
+
+def test_clean_env_does_not_inherit_the_calling_test_session(tmp_path: Path, monkeypatch):
+    """The witness must not depend on who ran it."""
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "outer::test")
+    monkeypatch.setenv("COV_CORE_SOURCE", "northstar")
+    monkeypatch.setenv("COVERAGE_FILE", "/tmp/.coverage")
+
+    env = behavior.clean_env(tmp_path)
+    assert "PYTEST_CURRENT_TEST" not in env
+    assert "COV_CORE_SOURCE" not in env
+    assert "COVERAGE_FILE" not in env
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path.resolve())
+
+
+def test_clean_env_keeps_an_existing_pythonpath(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "/somewhere/else")
+    parts = behavior.clean_env(tmp_path)["PYTHONPATH"].split(os.pathsep)
+    assert parts == [str(tmp_path.resolve()), "/somewhere/else"]
 
 
 def test_capture_reads_a_real_suite(tmp_path: Path):

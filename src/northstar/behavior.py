@@ -27,6 +27,7 @@ UNKNOWN until someone actually needs them.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -90,6 +91,27 @@ def detect(root: Path) -> list[str] | None:
     return None
 
 
+#: Variables that leak the *calling* process's test session into the captured one.
+#: Inherited, they change what the suite collects and how it reports, which would
+#: make the witness depend on who ran it rather than on the code.
+_LEAKY_PREFIXES = ("PYTEST_", "COV_CORE_", "COVERAGE_")
+
+
+def clean_env(root: Path) -> dict[str, str]:
+    """Environment for the captured run: no inherited session, root importable.
+
+    A behavioural oracle has to produce the same outcomes whether it is invoked by
+    `northstar init`, by a git hook, or from inside another test suite. Putting the
+    project root on PYTHONPATH also removes the dependency on whatever `sys.path`
+    the caller happened to have.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith(_LEAKY_PREFIXES)}
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(Path(root).resolve()) + (os.pathsep + existing if existing else "")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
 def capture(root: Path, command: list[str] | None = None, timeout: int = 600) -> Run:
     """Run the suite and record per-test outcomes.
 
@@ -107,6 +129,7 @@ def capture(root: Path, command: list[str] | None = None, timeout: int = 600) ->
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=clean_env(root),
         )
     except FileNotFoundError:
         return Run({}, argv, error=f"{argv[0]} is not installed")

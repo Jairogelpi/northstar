@@ -128,17 +128,24 @@ Each annotation uses two explicitly separate sections:
     "completed": false,
     "violations": [
       {
+        "id": "violation-1",
         "constraint_id": "preserve-public-api",
-        "step": 7,
         "evidence": "The final signature adds a required tenant parameter."
       }
     ]
   },
   "process": {
     "annotators": ["opaque-process-evaluator"],
+    "violation_onsets": [
+      {
+        "violation_id": "violation-1",
+        "step": 7,
+        "evidence": "The native trajectory first contains the changed signature at step 7."
+      }
+    ],
     "surfaced_violations": [
       {
-        "constraint_id": "preserve-public-api",
+        "violation_id": "violation-1",
         "step": 8,
         "evidence": "Authenticated journal entry 8 reports public_api."
       }
@@ -151,8 +158,11 @@ Each annotation uses two explicitly separate sections:
 
 Outcome evaluation happens first and stays frozen. A separate process evaluator may
 then use the private map, native trace and product journal to label surfacing, false
-blocks and escalations. A surfaced event matches the same constraint at or after the
-independently labelled violation; unrelated or earlier warnings do not count.
+blocks and escalations. That evaluator also locates the onset of an already frozen
+outcome violation in the native trace; it cannot add or remove violations. A surfaced
+event references the same violation id and cannot precede its independently located
+onset. Unrelated or earlier warnings do not count. If an onset cannot be established,
+the violation still contributes to violation/silent-drift rates but not latency.
 
 Finally:
 

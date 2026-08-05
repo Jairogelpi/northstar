@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -180,6 +181,82 @@ def test_receipt_json(initialised: Path):
     code, text = run(["--root", str(initialised), "receipt", "--json"])
     assert code == cli.EXIT_OK
     assert json.loads(text)["contract_version"] == 1
+
+
+def test_live_bench_cli_dispatches_the_reproducible_pipeline(tmp_path: Path, monkeypatch):
+    study = SimpleNamespace(id="study", tasks=[object()], agents=[object()])
+    monkeypatch.setattr(cli.livebench, "load", lambda path: study)
+    monkeypatch.setattr(cli.livebench, "build_plan", lambda value: [{}, {}])
+    monkeypatch.setattr(cli.livebench, "save_plan", lambda value, path: path)
+    observed: dict[str, object] = {}
+
+    def fake_run(value, path, resume=False):
+        observed["resume"] = resume
+        return path
+
+    monkeypatch.setattr(cli.livebench, "run", fake_run)
+    monkeypatch.setattr(
+        cli.livebench,
+        "make_packets",
+        lambda runs, packets, mapping: (packets, mapping),
+    )
+    report = {"study_id": "study", "runs": 2}
+    monkeypatch.setattr(cli.livebench, "analyse", lambda runs, annotations, mapping: report)
+    monkeypatch.setattr(cli.livebench, "save_report", lambda value, path: path)
+
+    code, text = run(["live-bench", "validate", "study.yml"])
+    assert code == cli.EXIT_OK and json.loads(text)["pairs"] == 1
+    code, text = run(
+        ["live-bench", "plan", "study.yml", "--output", str(tmp_path / "plan.json")]
+    )
+    assert code == cli.EXIT_OK and "plan written" in text
+    code, text = run(
+        [
+            "live-bench",
+            "run",
+            "study.yml",
+            "--output",
+            str(tmp_path / "runs"),
+            "--resume",
+        ]
+    )
+    assert code == cli.EXIT_OK and observed["resume"] is True
+    code, text = run(
+        [
+            "live-bench",
+            "packet",
+            str(tmp_path / "runs"),
+            "--output",
+            str(tmp_path / "packets"),
+            "--map",
+            str(tmp_path / "map.json"),
+        ]
+    )
+    assert code == cli.EXIT_OK and "private blinding map" in text
+    code, text = run(
+        [
+            "live-bench",
+            "analyze",
+            str(tmp_path / "runs"),
+            "--annotations",
+            str(tmp_path / "annotations"),
+            "--map",
+            str(tmp_path / "map.json"),
+            "--output",
+            str(tmp_path / "report.json"),
+        ]
+    )
+    assert code == cli.EXIT_OK and json.loads(text) == report
+
+
+def test_live_bench_cli_reports_study_errors(monkeypatch, capsys):
+    def fail(path):
+        raise cli.livebench.StudyError("invalid study")
+
+    monkeypatch.setattr(cli.livebench, "load", fail)
+    code, _ = run(["live-bench", "validate", "study.yml"])
+    assert code == cli.EXIT_ERROR
+    assert "invalid study" in capsys.readouterr().err
 
 
 # -------------------------------------------------------------------- misc

@@ -21,6 +21,10 @@
 - Shell, Python, redirection, custom MCP, hook deletion, direct API, and rebaseline attacks in IntentDriftBench.
 - Content-complete journal replay is opt-in; legacy verdict-only journals are no longer misrepresented as replays.
 - Pytest behavioural capture now uses the active interpreter and works with current pytest releases.
+- Executable LiveAgentBench pipeline for real Claude Code/Codex runs: strict manifests,
+  pinned version checks, paired randomisation, isolated clones, complete-tree/native
+  traces, arm-blinded packets, independent annotations, observed-hook validation, and
+  aggregate/per-task bootstrap analysis. No live result is claimed by the harness.
 
 ### Distribution
 

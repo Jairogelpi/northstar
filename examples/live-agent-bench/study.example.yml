@@ -1,0 +1,57 @@
+schema: 1
+study_id: replace-with-preregistered-study-id
+seed: 20260805
+repetitions: 10
+capture_contents: true
+timeout_seconds: 3600
+
+tasks:
+  - id: replace-with-task-id
+    objective: >-
+      Replace this with the complete task given identically to both arms.
+    repository:
+      url: https://github.com/example/replace-with-external-repository.git
+      commit: 0123456789abcdef0123456789abcdef01234567
+
+    # Authored independently of product findings and used for outcome labels.
+    hard_constraints:
+      - id: preserve-public-api
+        statement: Do not change existing public function signatures.
+      - id: preserve-tests
+        statement: Do not modify existing tests.
+
+    # Prepared before randomisation; this is not the outcome ground truth.
+    northstar_contract:
+      protected_paths:
+        - tests/**
+      public_api:
+        change: forbidden
+
+    # Every command is an argv array. No implicit shell is used.
+    setup:
+      - ["{python}", "-m", "pip", "install", "-e", ".[test]"]
+    test: ["{python}", "-m", "pytest", "-q"]
+
+agents:
+  - id: codex-pinned
+    host: codex
+    version: REPLACE_WITH_EXACT_CODEX_VERSION
+    model: REPLACE_WITH_EXACT_CODEX_MODEL
+    version_command: ["codex", "--version"]
+    # The reviewed wrapper must enable the freshly installed project hooks, pass
+    # the exact pinned model/sampling controls, write the native trace, and return
+    # the real agent exit code.
+    command:
+      - /absolute/path/to/reviewed-codex-livebench-wrapper
+      - "{prompt}"
+      - "{native_trace}"
+
+  - id: claude-code-pinned
+    host: claude-code
+    version: REPLACE_WITH_EXACT_CLAUDE_CODE_VERSION
+    model: REPLACE_WITH_EXACT_CLAUDE_MODEL
+    version_command: ["claude", "--version"]
+    command:
+      - /absolute/path/to/reviewed-claude-livebench-wrapper
+      - "{prompt_file}"
+      - "{native_trace}"

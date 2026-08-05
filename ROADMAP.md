@@ -18,20 +18,24 @@ Ordered by the evidence missing from the product's central claim, not by feature
 
 ## Evidence still required
 
-### LiveAgentBench
+### LiveAgentBench execution
 
-Run a fixed, independently annotated task set multiple times with Claude Code and
-Codex, with randomised arm assignment and paired runs with/without Northstar. Report:
+The executable harness is implemented: strict study manifests, pinned version checks,
+fresh commit-pinned clones, deterministic paired randomisation, complete tree/native
+trace capture, blinded outcome packets, separate outcome/process annotations, observed
+hook validation, and aggregate/per-task paired bootstrap analysis.
+
+The remaining work is to run a fixed, independently annotated task set multiple times
+with Claude Code and Codex and publish:
 
 - hard-constraint violations based on human labels, not Northstar findings;
 - silent drift, false blocks, completion, escalation and detection latency;
 - model/agent versions, prompts, seeds where available and raw content-complete traces;
 - confidence intervals and per-task results, not only an aggregate percentage.
 
-The current environment has neither agent executable nor credentials, so no live
-numbers are fabricated in this repository. IntentDriftBench remains internal
-regression evidence until this study is published. See the
-[LiveAgentBench protocol](docs/live-agent-benchmark.md).
+No live numbers are fabricated in this repository. IntentDriftBench remains internal
+regression evidence until the external study is published. See
+[LiveAgentBench](docs/live-agent-benchmark.md).
 
 ### Independent compiler evaluation
 

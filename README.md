@@ -270,6 +270,7 @@ northstar approve REQUEST_ID     # human-only, interactive, one-time approval
 northstar freeze --reason "..."  # human-confirmed full re-baseline
 northstar receipt                # bind contract, baseline, decisions, amendments
 northstar bench                  # run IntentDriftBench
+northstar live-bench --help      # paired, blinded real-agent study pipeline
 northstar show                   # print the contract
 ```
 
@@ -384,11 +385,31 @@ say it is usable.
 scripted, not sampled from live agents or independently labelled. The numbers are
 regression evidence, not an external effectiveness estimate. Content-complete replay
 is opt-in with `NORTHSTAR_CAPTURE_REPLAY=1`; verdict-only legacy journals are rejected
-rather than converted into fake empty-file actions. The live-agent protocol remains
-future evidence, not a shipped result.
+rather than converted into fake empty-file actions.
 
-The pre-registered study design and required run record are documented in
-[LiveAgentBench protocol](docs/live-agent-benchmark.md).
+### LiveAgentBench
+
+The executable live-agent harness now ships, but live-agent **results do not**. It
+creates randomised paired clones for Claude Code and Codex, verifies pinned agent
+versions, captures complete before/after trees and native traces, emits arm-blinded
+outcome packets, validates separate outcome/process annotations, and calculates
+paired bootstrap intervals both in aggregate and per task.
+
+Most importantly, a protected run is rejected from analysis if Northstar's sealed
+authority fails verification or the run recorded no actual hook activity. That stops a
+misconfigured “with Northstar” arm from becoming favourable but invalid evidence.
+
+```bash
+northstar live-bench validate study.yml
+northstar live-bench run study.yml --output live-runs
+northstar live-bench packet live-runs --output packets --map private-map.json
+northstar live-bench analyze live-runs --annotations labels --map private-map.json --output report.json
+```
+
+The pre-registered design, manifest, blinding boundary and annotation schema are in
+[LiveAgentBench](docs/live-agent-benchmark.md). Until independently labelled Claude
+Code and Codex runs are published, this is evaluation readiness—not effectiveness
+evidence.
 
 ---
 

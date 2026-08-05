@@ -82,11 +82,17 @@ problem. So it is fixed in the architecture.
 
 ## Install
 
+Until the first `0.2.x` package is published, install the reviewed source from GitHub:
+
 ```bash
-pip install northstar-runtime
-cd your-project
+git clone https://github.com/Jairogelpi/northstar.git
+python -m pip install ./northstar
+cd /path/to/your-project
 northstar init "what this run is meant to achieve"
 ```
+
+`pip install northstar-runtime` will become the preferred path after the release
+workflow has published and smoke-tested the package on PyPI.
 
 `init` asks the human to create an approval passphrase, writes readable mirrors,
 freezes the baseline, creates the external authority, and wires both agents. No
@@ -416,7 +422,10 @@ pytest --cov=northstar --cov-report=term-missing
 Coverage is enforced at 95% in `pyproject.toml`. CI runs the suite on Ubuntu and
 Windows across Python 3.11–3.13, re-runs the scripted benchmark, builds wheel and
 sdist, validates metadata, and clean-installs the wheel on every change. Tag releases
-use PyPI trusted publishing and attach distributions, an SBOM, and build provenance.
+are configured to use PyPI trusted publishing and attach distributions, an SBOM, and
+build provenance. The first `0.2.x` publication remains pending the one-time PyPI
+Trusted Publisher and GitHub `pypi` environment setup described in
+[docs/releasing.md](docs/releasing.md).
 
 The drift, policy, authority and benchmark tests exercise both ordinary invariant
 breaks and integrity attacks end-to-end through the same hook a real agent hits.

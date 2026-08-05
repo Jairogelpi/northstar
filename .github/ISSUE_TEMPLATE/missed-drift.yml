@@ -1,0 +1,37 @@
+name: Missed drift
+description: Report a constraint violation that Northstar did not surface
+title: "[missed drift] "
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets or proprietary source. Security bypasses belong in a private advisory.
+  - type: textarea
+    id: action
+    attributes:
+      label: What the agent did
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Relevant objective and contract sections
+    validations:
+      required: true
+  - type: textarea
+    id: verdict
+    attributes:
+      label: Northstar output, including any UNKNOWN result
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Northstar, agent host, OS and Python versions
+    validations:
+      required: true

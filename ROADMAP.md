@@ -13,7 +13,8 @@ Ordered by the evidence missing from the product's central claim, not by feature
 - Adversarial scripted cases for shell, Python, redirection, custom MCP, hook deletion,
   direct API mutation and self-rebaseline.
 - Opt-in content-complete replay; verdict-only journals are explicitly not replayable.
-- Wheel/sdist smoke CI and tag-driven PyPI, SBOM, provenance and release assets.
+- Wheel/sdist smoke CI and a prepared tag-driven workflow for PyPI, SBOM, provenance
+  and release assets; first publication still requires the documented one-time setup.
 
 ## Evidence still required
 

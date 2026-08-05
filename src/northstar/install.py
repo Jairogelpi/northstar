@@ -73,6 +73,15 @@ def codex_notify(root: Path) -> str:
     )
 
 
+def _replace_notify(previous: str, body: str) -> str:
+    if re.search(r"(?m)^\s*notify\s*=.*$", previous):
+        # A replacement string would interpret Windows backslashes a second
+        # time. The callback returns the JSON/TOML text literally.
+        return re.sub(r"(?m)^\s*notify\s*=.*$", lambda _: body, previous)
+    separator = "\n" if previous and not previous.endswith("\n") else ""
+    return previous + separator + body + "\n"
+
+
 def _hook_entry(root: Path) -> dict:
     return {
         "matcher": "*",
@@ -133,11 +142,7 @@ def install_codex(root: Path) -> list[Path]:
     body = codex_notify(root)
     config.parent.mkdir(parents=True, exist_ok=True)
     previous = read_text(config) if config.exists() else ""
-    if re.search(r"(?m)^\s*notify\s*=.*$", previous):
-        updated = re.sub(r"(?m)^\s*notify\s*=.*$", body, previous)
-    else:
-        separator = "\n" if previous and not previous.endswith("\n") else ""
-        updated = previous + separator + body + "\n"
+    updated = _replace_notify(previous, body)
     if updated != previous:
         config.write_text(updated, encoding="utf-8")
     written.append(config)

@@ -115,6 +115,12 @@ def test_codex_replaces_an_unbound_notify_hook(tmp_path: Path):
     assert text.count("notify") == 1
 
 
+def test_notify_replacement_preserves_windows_toml_escaping():
+    body = 'notify = ["northstar", "--root", "C:\\\\Users\\\\agent", "hook"]'
+    updated = inst._replace_notify('notify = ["northstar", "hook"]\n', body)
+    assert updated == body + "\n"
+
+
 def test_install_wires_both_agents_by_default(tmp_path: Path):
     written = {Path(p).name for p in inst.install(tmp_path)}
     assert written == {"settings.json", "CLAUDE.md", "AGENTS.md", "config.toml"}

@@ -107,8 +107,8 @@ def _annotations(output: Path, packets: Path, mapping_path: Path, target: Path) 
         if planned["arm"] == livebench.WITHOUT_RUNTIME:
             violations = [
                 {
+                    "id": "violation-1",
                     "constraint_id": "keep-readme",
-                    "step": 1,
                     "evidence": "Independent evaluator fixture.",
                 }
             ]
@@ -122,6 +122,17 @@ def _annotations(output: Path, packets: Path, mapping_path: Path, target: Path) 
             },
             "process": {
                 "annotators": ["process-evaluator-b"],
+                "violation_onsets": (
+                    [
+                        {
+                            "violation_id": "violation-1",
+                            "step": 1,
+                            "evidence": "Native trajectory fixture.",
+                        }
+                    ]
+                    if violations
+                    else []
+                ),
                 "surfaced_violations": [],
                 "false_blocks": [],
                 "human_escalations": [],
@@ -288,15 +299,18 @@ def test_annotation_latency_matches_the_same_constraint():
             "annotators": ["a"],
             "completed": False,
             "violations": [
-                {"constraint_id": "c1", "step": 2, "evidence": "diff"},
-                {"constraint_id": "c2", "step": 5, "evidence": "tests"},
+                {"id": "v1", "constraint_id": "c1", "evidence": "diff"},
+                {"id": "v2", "constraint_id": "c2", "evidence": "tests"},
             ],
         },
         "process": {
             "annotators": ["b"],
+            "violation_onsets": [
+                {"violation_id": "v1", "step": 2, "evidence": "native trace"},
+                {"violation_id": "v2", "step": 5, "evidence": "native trace"},
+            ],
             "surfaced_violations": [
-                {"constraint_id": "c1", "step": 4, "evidence": "journal"},
-                {"constraint_id": "c2", "step": 3, "evidence": "too early"},
+                {"violation_id": "v1", "step": 4, "evidence": "journal"},
             ],
             "false_blocks": ["blocked-clean-step"],
             "human_escalations": ["request-1"],
@@ -313,6 +327,31 @@ def test_annotation_latency_matches_the_same_constraint():
         "task_completion_rate": False,
         "detection_latency_steps": 2.0,
     }
+
+
+def test_annotation_rejects_detection_before_violation_onset():
+    annotation = {
+        "schema": 1,
+        "outcome": {
+            "annotators": ["a"],
+            "completed": False,
+            "violations": [{"id": "v1", "constraint_id": "c1", "evidence": "diff"}],
+        },
+        "process": {
+            "annotators": ["b"],
+            "violation_onsets": [
+                {"violation_id": "v1", "step": 4, "evidence": "native trace"}
+            ],
+            "surfaced_violations": [
+                {"violation_id": "v1", "step": 3, "evidence": "journal"}
+            ],
+            "false_blocks": [],
+            "human_escalations": [],
+        },
+    }
+
+    with pytest.raises(livebench.StudyError, match="cannot be surfaced before"):
+        livebench._validate_annotation(annotation, {"c1"})
 
 
 def test_command_failures_are_recorded_without_shell_text(tmp_path: Path):
@@ -367,31 +406,36 @@ def test_unreadable_manifests_and_json_fail_explicitly(tmp_path: Path):
         (lambda value: value["outcome"].update(violations={}), "violations must be a list"),
         (
             lambda value: value["outcome"].update(
-                violations=[{"constraint_id": "unknown", "step": 1, "evidence": "x"}]
+                violations=[{"id": "v1", "constraint_id": "unknown", "evidence": "x"}]
             ),
             "unknown hard constraint",
         ),
         (
             lambda value: value["outcome"].update(
-                violations=[{"constraint_id": "c1", "step": 0, "evidence": "x"}]
+                violations=[{"id": "bad id", "constraint_id": "c1", "evidence": "x"}]
             ),
-            "positive integer",
+            "portable identifier",
         ),
         (lambda value: value["process"].update(annotators=[]), "annotator"),
         (lambda value: value["process"].update(false_blocks={}), "must be a list"),
         (
             lambda value: value["process"].update(
                 surfaced_violations=[
-                    {"constraint_id": "unknown", "step": 1, "evidence": "x"}
+                    {"violation_id": "unknown", "step": 1, "evidence": "x"}
                 ]
             ),
-            "unknown hard constraint",
+            "unknown outcome violation",
         ),
         (
-            lambda value: value["process"].update(
-                surfaced_violations=[
-                    {"constraint_id": "c1", "step": False, "evidence": "x"}
-                ]
+            lambda value: (
+                value["outcome"].update(
+                    violations=[{"id": "v1", "constraint_id": "c1", "evidence": "x"}]
+                ),
+                value["process"].update(
+                    surfaced_violations=[
+                        {"violation_id": "v1", "step": False, "evidence": "x"}
+                    ]
+                ),
             ),
             "positive integer",
         ),
@@ -403,6 +447,7 @@ def test_annotations_are_strict(mutate, message: str):
         "outcome": {"annotators": ["a"], "completed": True, "violations": []},
         "process": {
             "annotators": ["b"],
+            "violation_onsets": [],
             "surfaced_violations": [],
             "false_blocks": [],
             "human_escalations": [],

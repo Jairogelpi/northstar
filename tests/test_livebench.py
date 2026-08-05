@@ -83,7 +83,7 @@ def manifest_data(repository: Path, commit: str, *, capture_contents: bool = Tru
                 "version": "fixture-1",
                 "model": "deterministic-fixture",
                 "version_command": ["{python}", "-c", "print('fixture-1')"],
-                "command": ["{python}", "-c", AGENT_SCRIPT, "{prompt}"],
+                "command": ["{python}", "-c", AGENT_SCRIPT, "{prompt}", "{model}"],
             }
         ],
     }
@@ -173,6 +173,7 @@ def test_run_packet_and_independent_analysis(task_repo: tuple[Path, str], tmp_pa
         record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         assert record["test_exit_code"] == 0
         assert record["agent"]["observed_version"] == "fixture-1"
+        assert record["agent"]["command"][-1] == "deterministic-fixture"
         assert record["native_trace_exists"]
         assert (run_dir / "task-diff.json").exists()
         if planned["arm"] == livebench.WITH_RUNTIME:
@@ -290,6 +291,34 @@ def test_packet_creation_refuses_hash_only_evidence(task_repo: tuple[Path, str],
     output = livebench.run(study, tmp_path / "runs")
     with pytest.raises(livebench.StudyError, match="capture_contents: true"):
         livebench.make_packets(output, tmp_path / "packets", tmp_path / "map.json")
+
+
+def test_agent_version_pin_requires_the_complete_output(
+    task_repo: tuple[Path, str], tmp_path: Path
+):
+    repository, commit = task_repo
+    data = manifest_data(repository, commit)
+    data["agents"][0]["version_command"] = [
+        "{python}",
+        "-c",
+        "print('fixture-10')",
+    ]
+    study = livebench.load(write_manifest(tmp_path, data))
+
+    with pytest.raises(livebench.StudyError, match="expected exactly 'fixture-1'"):
+        livebench.run(study, tmp_path / "runs")
+
+
+def test_tracked_example_uses_direct_agent_commands_and_the_declared_model():
+    example = Path(__file__).parents[1] / "examples" / "live-agent-bench" / "study.example.yml"
+    study = livebench.load(example)
+
+    commands = {agent.host: agent.command for agent in study.agents}
+    assert commands["codex"][:2] == ("codex", "exec")
+    assert "--dangerously-bypass-hook-trust" in commands["codex"]
+    assert commands["claude-code"][0] == "claude"
+    assert "--include-hook-events" in commands["claude-code"]
+    assert all("{model}" in command for command in commands.values())
 
 
 def test_annotation_latency_matches_the_same_constraint():

@@ -15,7 +15,7 @@ def test_claude_hooks_are_registered(tmp_path: Path):
     inst.install_claude(tmp_path)
     hooks = settings(tmp_path)["hooks"]
     for event in ("PreToolUse", "PostToolUse"):
-        assert hooks[event][0]["hooks"][0]["command"] == inst.HOOK_COMMAND
+        assert hooks[event][0]["hooks"][0]["command"] == inst.hook_command(tmp_path)
         assert hooks[event][0]["matcher"] == "*"
 
 
@@ -67,7 +67,7 @@ def test_agents_block_written_once_and_refreshed(tmp_path: Path):
     assert text.count(inst.AGENTS_BEGIN) == 1
     assert "Be nice." in text
     assert "Never write to `.northstar/`" in text
-    assert "You may not amend the contract" in text
+    assert "may request, but may not approve" in text
 
 
 def test_agents_block_created_when_file_absent(tmp_path: Path):
@@ -89,7 +89,7 @@ def test_codex_gets_instructions_and_a_notify_hook(tmp_path: Path):
     written = inst.install_codex(tmp_path)
     assert (tmp_path / "AGENTS.md").exists()
     config = read_text(tmp_path / ".codex" / "config.toml")
-    assert 'notify = ["northstar", "hook"]' in config
+    assert inst.codex_notify(tmp_path) in config
     assert len(written) == 2
 
     inst.install_codex(tmp_path)  # idempotent
@@ -103,6 +103,22 @@ def test_codex_config_appends_to_existing(tmp_path: Path):
     inst.install_codex(tmp_path)
     text = read_text(config)
     assert 'model = "gpt-5"' in text and "notify" in text
+
+
+def test_codex_replaces_an_unbound_notify_hook(tmp_path: Path):
+    config = tmp_path / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('notify = ["northstar", "hook"]\n', encoding="utf-8")
+    inst.install_codex(tmp_path)
+    text = read_text(config)
+    assert inst.codex_notify(tmp_path) in text
+    assert text.count("notify") == 1
+
+
+def test_notify_replacement_preserves_windows_toml_escaping():
+    body = 'notify = ["northstar", "--root", "C:\\\\Users\\\\agent", "hook"]'
+    updated = inst._replace_notify('notify = ["northstar", "hook"]\n', body)
+    assert updated == body + "\n"
 
 
 def test_install_wires_both_agents_by_default(tmp_path: Path):

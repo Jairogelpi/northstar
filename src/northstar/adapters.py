@@ -4,10 +4,9 @@ One normaliser, several agents. Claude Code and Codex disagree about JSON key
 names and about which event fires when, but every one of them ultimately says
 "this tool, these arguments" -- so the policy never learns their dialects.
 
-The hook process is deliberately separate from the agent: it re-reads the
-contract from disk on every call. The contract is never remembered, only re-read,
-which makes it immune to context compaction, to summarisation and to an agent
-talking itself out of a constraint.
+The hook process is deliberately separate from the agent: it verifies and re-reads
+the external authority on every call. The contract is never remembered, which makes
+it immune to context compaction, summarisation and working-tree mirror tampering.
 """
 
 from __future__ import annotations
@@ -19,8 +18,8 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from . import checks, evidence, policy
-from .contract import Contract, ContractError
-from .freeze import Oracle
+from .authority import Authority, IntegrityError
+from .contract import Contract
 from .policy import Decision, Verdict
 
 #: Claude Code treats exit code 2 as "block and show stderr to the model".
@@ -89,7 +88,7 @@ def block_message(verdict: Verdict, contract: Contract) -> str:
 
     A block is not a wall, it is a question with evidence attached. So the message
     names the divergence, names the grant that would authorise it, and says who
-    can sign -- otherwise the agent guesses, and guessing is how drift restarts.
+    can approve -- otherwise the agent guesses, and guessing is how drift restarts.
     """
     lines = ["NORTHSTAR: this action diverges from the intent contract.", ""]
     lines.append(f'Objective (contract v{contract.version}): "{contract.objective}"')
@@ -109,10 +108,10 @@ def block_message(verdict: Verdict, contract: Contract) -> str:
     if amendable:
         lines.append(
             "Do not work around this and do not edit .northstar/. Either take another "
-            "route, or stop and ask the human to sign:"
+            "route, or create a request for a human to approve:"
         )
         for finding in amendable:
-            lines.append(f'    northstar amend --grant "{finding.grant}" --reason "..."')
+            lines.append(f'    northstar request --grant "{finding.grant}" --reason "..."')
     else:
         # Nothing here is grantable, so offering a command would only invite a retry
         # of what was just refused.
@@ -129,19 +128,37 @@ def handle(
     stderr = stderr if stderr is not None else sys.stderr
     event = parse_event(payload)
     try:
-        contract = Contract.load(root)
-    except ContractError:
-        return EXIT_OK  # not a governed project; stay out of the way
+        authority = Authority.open(root)
+        if authority is None:
+            if (Path(root) / ".northstar" / "contract.yaml").exists():
+                raise IntegrityError("legacy in-tree authority is not trusted; re-initialise with R1")
+            return EXIT_OK  # genuinely ungoverned project; stay out of the way
+        contract, oracle = authority.load()
+    except IntegrityError as exc:
+        stderr.write(
+            "NORTHSTAR [DENY]\n"
+            f"[INTEGRITY_FAILURE] {exc}\n"
+            "Governance state is missing or tampered. Stop; a human must repair it.\n"
+        )
+        return EXIT_BLOCK
+
+    # Hook payloads may report a nested working directory. Runtime state and
+    # post-state checks always use the checkout root discovered by the authority;
+    # relative tool paths are still resolved from the action's actual cwd.
+    action_cwd = Path(event.cwd).resolve() if event.cwd else Path(root).resolve()
+    root = authority.root
 
     if event.is_post:
-        try:
-            oracle = Oracle.load(root)
-        except FileNotFoundError:
-            return EXIT_OK
         verdict = policy.evaluate(contract, oracle, root)
-        evidence.record(root, "check", event.tool, verdict)
+        evidence.record(
+            root,
+            "check",
+            event.tool,
+            verdict,
+            replay=evidence.capture_replay(root, oracle, event.params),
+        )
     else:
-        verdict = policy.gate(contract, event.tool, event.params, root)
+        verdict = policy.gate(contract, event.tool, event.params, root, cwd=action_cwd)
         if verdict.judgements:
             evidence.record(root, "gate", event.tool, verdict)
 

@@ -5,7 +5,6 @@ import pytest
 from northstar import surface
 from northstar.surface import EXACT, HEURISTIC, extract, has_surface
 
-
 # ------------------------------------------------------------------- python
 
 

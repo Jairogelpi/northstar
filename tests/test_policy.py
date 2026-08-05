@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from northstar import checks, policy
 from northstar.contract import Contract, default_contract
-from northstar.freeze import freeze
 from northstar.policy import Decision
 
 from .conftest import SERVICE, write
@@ -145,6 +142,38 @@ def test_gate_reads_multiedit_shapes(governed):
     assert policy.gate(contract, "MultiEdit", params, project).decision is Decision.DENY
 
 
+def test_gate_extracts_paths_from_apply_patch(governed):
+    project, contract, _ = governed
+    params = {"patch": "*** Begin Patch\n*** Update File: .northstar/oracle.json\n@@\n-{}\n+[]\n*** End Patch"}
+    assert policy.gate(contract, "apply_patch", params, project).decision is Decision.DENY
+
+
+def test_path_traversal_and_symlinks_resolve_before_matching(governed):
+    project, contract, _ = governed
+    assert policy.gate(
+        contract, "Write", {"file_path": "nested/../.northstar/oracle.json"}, project
+    ).decision is Decision.DENY
+    link = project / "grader-link"
+    try:
+        link.symlink_to(project / ".northstar", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+    assert policy.gate(
+        contract, "Write", {"file_path": "grader-link/oracle.json"}, project
+    ).decision is Decision.DENY
+
+
+def test_relative_path_is_resolved_from_action_cwd(governed):
+    project, contract, _ = governed
+    assert policy.gate(
+        contract,
+        "Write",
+        {"file_path": "../.northstar/oracle.json"},
+        project,
+        cwd=project / "src",
+    ).decision is Decision.DENY
+
+
 def test_gate_ignores_read_only_tools(governed):
     project, contract, _ = governed
     assert policy.gate(contract, "Read", {"file_path": "tests/test_auth.py"}, project).decision is Decision.ALLOW
@@ -161,6 +190,41 @@ def test_gate_allows_ordinary_commands(governed):
     assert policy.gate(contract, "Bash", {"command": "pytest -q"}, project).decision is Decision.ALLOW
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm .northstar/contract.yaml",
+        "python -c \"from pathlib import Path; Path('.northstar/oracle.json').unlink()\"",
+        "sed -i 's/x/y/' .northstar/contract.yaml",
+        "mv replacement .northstar/oracle.json",
+        "printf '{}' > .northstar/oracle.json",
+        "cd .northstar && rm oracle.json",
+        "rm .claude/settings.json",
+        "python -c \"from northstar.authority import Authority; Authority.for_root('.').seal()\"",
+    ],
+)
+def test_shell_cannot_mutate_authority_mirrors_or_wiring(governed, command):
+    project, contract, _ = governed
+    verdict = policy.gate(contract, "Bash", {"command": command}, project)
+    assert verdict.decision is Decision.DENY
+    assert verdict.blocking[0].finding.kind == checks.GOVERNANCE
+
+
+def test_unknown_tools_are_blocking_until_capability_is_declared(governed):
+    project, contract, _ = governed
+    params = {"path": "src/db.py"}
+    assert policy.gate(contract, "mcp_custom_writer", params, project).decision is Decision.REQUIRE_APPROVAL
+
+    contract.constraints["tools"]["read_only"] = ["mcp_custom_reader*"]
+    assert policy.gate(contract, "mcp_custom_reader_v2", params, project).decision is Decision.ALLOW
+
+    contract.constraints["tools"]["mutating"] = ["mcp_custom_writer"]
+    assert policy.gate(contract, "mcp_custom_writer", params, project).decision is Decision.ALLOW
+    assert policy.gate(
+        contract, "mcp_custom_writer", {"path": ".northstar/oracle.json"}, project
+    ).decision is Decision.DENY
+
+
 def test_gate_ignores_empty_command(governed):
     project, contract, _ = governed
     assert policy.gate(contract, "Bash", {"command": "   "}, project).judgements == []
@@ -173,14 +237,23 @@ def test_gate_accepts_alternate_command_key(governed):
 
 @pytest.mark.parametrize(
     "command",
-    ["northstar amend --grant public_api:x --reason y", "python -m northstar amend --grant a"],
+    [
+        "northstar approve abc",
+        "python -m northstar freeze --reason x",
+        "northstar migrate --accept-existing-state",
+    ],
 )
-def test_agent_cannot_sign_its_own_amendment(governed, command):
-    """Separation of powers: requesting is allowed, self-signing is not."""
+def test_agent_cannot_approve_or_rebaseline(governed, command):
     project, contract, _ = governed
     verdict = policy.gate(contract, "Bash", {"command": command}, project)
     assert verdict.decision is Decision.DENY
-    assert "signed by the human" in verdict.blocking[0].reason
+    assert "human-only" in verdict.blocking[0].reason
+
+
+def test_agent_may_create_an_untrusted_request(governed):
+    project, contract, _ = governed
+    command = "northstar request --grant public_api:x --reason y"
+    assert policy.gate(contract, "Bash", {"command": command}, project).decision is Decision.ALLOW
 
 
 def test_agent_may_still_run_read_only_northstar_commands(governed):

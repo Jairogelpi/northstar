@@ -1,0 +1,31 @@
+name: False block
+description: Report a legitimate action that Northstar refused
+title: "[false block] "
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets or proprietary source. Security bypasses belong in a private advisory.
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective and relevant contract sections
+    validations:
+      required: true
+  - type: textarea
+    id: action
+    attributes:
+      label: Refused tool action and exact verdict
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Why the action should have been allowed
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Northstar, agent host, OS and Python versions
+    validations:
+      required: true

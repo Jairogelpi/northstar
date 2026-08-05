@@ -28,6 +28,8 @@ ALWAYS_IGNORED = (
     ".idea",
     ".vscode",
     STATE_DIR,
+    ".northstar-authority",
+    ".northstar-bench-authority",
 )
 
 SOURCE_SUFFIXES = (
@@ -130,9 +132,16 @@ def git_commit(root: Path) -> str | None:
 
 
 def find_root(start: Path | None = None) -> Path:
-    """Nearest ancestor holding a .northstar dir, else the starting directory."""
+    """Nearest governed ancestor, including one whose in-tree marker was deleted."""
     current = Path(start or Path.cwd()).resolve()
     for candidate in [current, *current.parents]:
         if (candidate / STATE_DIR).is_dir():
             return candidate
+        try:
+            from .authority import Authority
+
+            if Authority.for_root(candidate).exists:
+                return candidate
+        except (ImportError, OSError):  # pragma: no cover - startup/platform edge
+            pass
     return current

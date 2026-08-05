@@ -12,9 +12,9 @@ So this compiler does three things instead:
    audit the translation at a glance.
 3. Reports everything it did not understand as `unmatched`, rather than guessing.
 
-Its accuracy is a measured number, not an assumption -- see
-`tests/test_compiler.py`, which scores it against a fixture corpus and fails the
-build if precision or recall regress.
+`tests/test_compiler.py` scores a small labelled fixture corpus so known phrasings do
+not regress. That fixture is not a held-out accuracy estimate; README and ROADMAP
+state the external evaluation still required.
 """
 
 from __future__ import annotations

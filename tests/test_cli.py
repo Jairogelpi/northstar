@@ -10,7 +10,7 @@ from northstar import cli
 from northstar.contract import Contract
 from northstar.util import read_text
 
-from .conftest import SERVICE, write
+from .conftest import APPROVAL_SECRET, SERVICE, write
 
 
 def run(argv: list[str]) -> tuple[int, str]:
@@ -103,15 +103,21 @@ def test_status_shows_drift_and_exits_non_zero(initialised: Path):
 # ------------------------------------------------------------------- amend
 
 
-def test_amend_unblocks_only_what_was_signed(initialised: Path):
+def test_request_then_separate_approval_unblocks_only_what_was_signed(initialised: Path, monkeypatch):
     write(initialised, "pyproject.toml", '[project]\ndependencies = ["requests", "pyyaml", "httpx"]\n')
     assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_BLOCKED
 
     code, text = run(
-        ["--root", str(initialised), "amend", "--grant", "dependency:httpx", "--reason", "async client needed"]
+        ["--root", str(initialised), "request", "--grant", "dependency:httpx", "--reason", "async client needed"]
     )
     assert code == cli.EXIT_OK
-    assert "v2" in text and "granted: dependency:httpx" in text
+    assert "contract unchanged" in text
+    assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_BLOCKED
+    request_id = text.split("approval request created: ", 1)[1].splitlines()[0]
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+    code, text = run(["--root", str(initialised), "approve", request_id])
+    assert code == cli.EXIT_OK
+    assert "contract v2" in text and "granted: dependency:httpx" in text
     assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_OK
 
     # a second, unsigned dependency is still blocked
@@ -119,28 +125,33 @@ def test_amend_unblocks_only_what_was_signed(initialised: Path):
     assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_BLOCKED
 
 
-def test_amend_records_the_signer_and_the_reason(initialised: Path):
-    run(
-        [
-            "--root", str(initialised), "amend",
-            "--grant", "public_api:src/auth/service.py::login",
-            "--reason", "mfa argument agreed",
-            "--signed-by", "asesor",
-        ]
+def test_approval_authenticates_the_signer_reason_and_nonce(initialised: Path, monkeypatch):
+    _, text = run(
+        ["--root", str(initialised), "amend", "--grant", "public_api:src/auth/service.py::login", "--reason", "mfa argument agreed"]
     )
-    contract = Contract.load(initialised)
-    assert contract.amendments[0].signed_by == "asesor"
+    request_id = text.split("approval request created: ", 1)[1].splitlines()[0]
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+    run(["--root", str(initialised), "approve", request_id])
+    from northstar.authority import Authority
+
+    authority = Authority.open(initialised, required=True)
+    assert authority is not None
+    contract, _ = authority.load()
+    assert contract.amendments[0].signed_by
     assert contract.amendments[0].reason == "mfa argument agreed"
+    assert contract.amendments[0].approval_id == request_id
+    assert contract.amendments[0].signature
 
 
 # ----------------------------------------------------------- freeze / show
 
 
-def test_freeze_rebaselines(initialised: Path):
+def test_freeze_rebaselines_only_after_human_confirmation(initialised: Path, monkeypatch):
     write(initialised, "src/auth/service.py", SERVICE.replace("password: str", "pwd: str"))
     assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_BLOCKED
 
-    code, text = run(["--root", str(initialised), "freeze"])
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+    code, text = run(["--root", str(initialised), "freeze", "--reason", "new scope agreed"])
     assert code == cli.EXIT_OK and "re-frozen" in text
     assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_OK
 
@@ -178,6 +189,16 @@ def test_install_command(project: Path):
     assert code == cli.EXIT_OK and "wired" in text
 
 
+def test_governed_wiring_repair_requires_the_approval_secret(initialised: Path, monkeypatch):
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: "wrong-secret")
+    assert run(["--root", str(initialised), "install", "--agent", "claude"])[0] == cli.EXIT_BLOCKED
+
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+    code, text = run(["--root", str(initialised), "install", "--agent", "claude"])
+    assert code == cli.EXIT_OK
+    assert "settings.json" in text
+
+
 def test_hook_command_reads_stdin(initialised: Path, monkeypatch):
     payload = json.dumps(
         {
@@ -194,18 +215,34 @@ def test_hook_command_reads_stdin(initialised: Path, monkeypatch):
 
 def test_hook_command_falls_back_to_root_flag(initialised: Path, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
-    assert run(["--root", str(initialised), "hook"])[0] == 0
+    assert run(["--root", str(initialised), "hook"])[0] == 2
+
+
+def test_bound_hook_root_wins_when_payload_cwd_leaves_repository(
+    initialised: Path, tmp_path: Path, monkeypatch
+):
+    payload = json.dumps(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(initialised / ".northstar" / "oracle.json")},
+            "cwd": str(tmp_path),
+        }
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    monkeypatch.setattr("sys.stderr", io.StringIO())
+    assert run(["--root", str(initialised), "hook"])[0] == 2
 
 
 def test_missing_contract_is_an_error_not_a_traceback(tmp_path: Path, capsys):
-    assert run(["--root", str(tmp_path), "check"])[0] == cli.EXIT_ERROR
-    assert "no contract" in capsys.readouterr().err
+    assert run(["--root", str(tmp_path), "check"])[0] == cli.EXIT_BLOCKED
+    assert "not governed" in capsys.readouterr().err
 
 
 def test_missing_oracle_is_an_error(project: Path, capsys):
     Contract(objective="x").save(project)
-    assert run(["--root", str(project), "check"])[0] == cli.EXIT_ERROR
-    assert "no oracle" in capsys.readouterr().err
+    assert run(["--root", str(project), "check"])[0] == cli.EXIT_BLOCKED
+    assert "external authority is missing" in capsys.readouterr().err
 
 
 def test_root_defaults_to_the_nearest_governed_dir(initialised: Path, monkeypatch):
@@ -269,6 +306,28 @@ def test_init_with_behaviour_freezes_the_suite(project: Path):
     assert code == cli.EXIT_OK
     contract = Contract.load(project)
     assert contract.tracks_behavior
+
+
+def test_v01_migration_requires_review_and_authenticates_old_amendments(project: Path):
+    from northstar.authority import Authority
+    from northstar.freeze import freeze
+
+    legacy = Contract(objective="legacy")
+    legacy.amend("old exception", ["dependency:httpx"], signed_by="arbitrary-v01-value")
+    legacy.save(project)
+    freeze(project, legacy.api_scope).save(project)
+
+    assert run(["--root", str(project), "migrate"])[0] == cli.EXIT_BLOCKED
+    code, text = run(["--root", str(project), "migrate", "--accept-existing-state"])
+    assert code == cli.EXIT_OK
+    assert "migrated contract v2" in text
+    authority = Authority.open(project, required=True)
+    assert authority is not None
+    contract, _ = authority.load()
+    amendment = contract.amendments[0]
+    assert amendment.approval_id == "migration-v2"
+    assert amendment.signature
+    assert amendment.signed_by != "arbitrary-v01-value"
 
 
 # ------------------------------------------------------------------- bench

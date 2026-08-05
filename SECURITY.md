@@ -5,48 +5,82 @@
 Open a [private security advisory](https://github.com/Jairogelpi/northstar/security/advisories/new).
 Please do not open a public issue for a vulnerability.
 
+## Security claim
+
+Northstar is a deterministic correctness guardrail with a **tamper-evident,
+fail-closed integrity boundary**. It is not an OS sandbox and does not claim to stop
+a malicious process with unrestricted access as the same operating-system user.
+
+That distinction is deliberate:
+
+- the working tree is untrusted;
+- the canonical contract, oracle, journal and metadata live in the OS data directory;
+- an HMAC manifest binds the canonical artifacts and their readable in-tree mirrors;
+- Ed25519-signed amendments bind a one-time request id, grants, reason, signer and
+  contract version; the private key is stored encrypted by a human passphrase and the
+  runtime verifies with the public key;
+- missing or corrupt authority, mirrors or agent wiring returns a blocking
+  `INTEGRITY_FAILURE`;
+- a process with unrestricted same-user filesystem access can ultimately reach the
+  HMAC key. Use a sandbox, separate service account or future authority daemon when
+  defending against that process is required.
+
+HMAC is used to distinguish normal runtime writes, accidental corruption and direct
+working-tree tampering. Ed25519 authenticates the amendment chain. The recorded OS
+username is attribution; possession of the approval passphrase is the signing
+authority.
+
 ## Threat model
 
-Northstar's adversary is **a capable coding agent that is not trying to be
-malicious** — one that will take the shortest path to a green result, including
-paths you did not intend. It is not designed to stop a determined human attacker
-with shell access, and it does not claim to.
+The primary adversary is a capable coding agent pursuing a green result through any
+tool exposed by its host, including shell and custom MCP tools. The active Claude Code
+hook is expected to see each tool call. Codex currently provides post-hoc detection,
+not pre-action prevention.
 
-### What it defends against
-
-| Attack | Defence |
+| Attack | R1 behaviour |
 |---|---|
-| Editing tests so the change looks correct | `protected_paths`, blocked at the pre-tool gate before the write lands |
-| Editing the oracle or contract | `.northstar/**` is protected in code, not in config — the contract cannot disable it |
-| Signing its own exception | `northstar amend` from an agent shell is denied; only a human signs |
-| Forgetting a constraint after compaction | The contract is re-read from disk per call; the hook process holds no memory |
-| Breaking an invariant then "restoring" it | Every check compares against the baseline, so violations are monotone |
-| A subagent dropping the parent's constraints | Subagents hit the same on-disk contract; nothing is passed through a prompt |
+| Edit/delete `.northstar/**` with Edit/Write/apply_patch | Pre-tool `DENY`; mirror verification also fails closed |
+| `rm`, `sed -i`, `mv`, redirection or `python -c` against Northstar state | Obvious references are denied before shell execution; seal verification detects a miss afterward |
+| Delete Claude/Codex wiring | Wiring files are hard-protected and structurally verified; current post-hook fails closed if deletion lands |
+| Unknown/custom MCP tool | Blocking `REQUIRE_APPROVAL` until classified as `read_only` or `mutating`; protected targets still deny |
+| Path traversal or symlink into `.northstar` | Target is resolved before protected-path matching |
+| Delete/corrupt contract or oracle | External canonical copy remains; any missing/mismatched mirror is `INTEGRITY_FAILURE` |
+| Replace canonical artifact | Manifest digest/HMAC fails |
+| Rewrite an amendment and reseal the bundle | Ed25519 verification fails |
+| Invoke `northstar approve`, `freeze`, `init`, `migrate` or `install` from agent shell | Governance action is denied by the gate; trusted mutations also require the approval passphrase |
+| Invoke `northstar amend` | Creates an untrusted request only; the live contract is unchanged |
+| Reuse an approval | Consumed request ids are rejected |
+| Malformed/missing hook payload in governed project | Unknown capability is blocking, not fail-open |
 
-### What it does not defend against
+## Residual risks
 
-Stated plainly, because a guardrail whose limits are unclear is worse than none:
-
-- **An agent with unrestricted shell that bypasses the hook.** If the agent can run
-  commands the gate never sees — a detached process, a different working directory, a
-  shell the adapter is not wired into — nothing here applies. Northstar is a
-  correctness guardrail, not a sandbox. Run it inside one.
-- **Editing `.northstar/` outside the agent's tool calls.** The gate blocks tool
-  writes. It does not make the directory read-only at the filesystem level. Commit
-  the contract and oracle to git so tampering shows up in a diff.
-- **Languages with no extractor.** Their API surface is `UNKNOWN`, not protected.
-- **Pattern-based extractors** (JS/TS, Go, Rust, Java) can miss exotic declarations.
-  Findings from them say `heuristic extractor` for exactly this reason.
+- **Same-user unrestricted shell.** Shell is Turing-complete; no command parser can
+  prove an arbitrary program is read-only. An agent that can bypass hooks and access
+  the authority directory as the same user can read the integrity key, replace state,
+  or remove both marker and authority. Northstar detects ordinary and tested paths;
+  it is not the isolation boundary. Run the agent in a sandbox that cannot write the
+  authority directory when malicious-agent resistance matters.
+- **Detached processes and unobserved tools.** If the agent host does not invoke the
+  hook, only the next explicit Northstar check can detect drift. Codex enforcement is
+  expressly post-hoc.
+- **Hook self-repair is not atomic rollback.** A post-hook can report deleted wiring,
+  but the mutating command has already executed. Human repair is required.
+- **Languages without exact extractors.** Unsupported surfaces are `UNKNOWN`;
+  heuristic extractors can miss exotic declarations.
 - **Anything the contract does not name.** Northstar is a deny-list. Silence is
-  permission, by design.
+  permission except for the hard integrity boundary and unclassified tool capability.
+- **Approval terminal provenance.** The encrypted signing key requires a passphrase
+  read from an interactive terminal and removes arbitrary `--signed-by`. It is still
+  not hardware-backed identity; a future authority daemon or OS keychain integration
+  can strengthen key custody.
 
-### Deliberate design decisions
+## Operational guidance
 
-- `UNKNOWN` is a verdict, never an implicit pass. A file that cannot be parsed is
-  reported as uncovered, because claiming coverage we do not have is the failure mode
-  that makes a guardrail worse than nothing.
-- Amendments re-baseline only what they name. One signature is never a general
-  amnesty.
-- Refusals of an *action* (a forbidden command, an attempted self-amend) cannot be
-  granted by any signature, and the block message does not offer a grant for them —
-  offering one would invite a retry of what was just refused.
+1. Keep the agent inside a filesystem/network sandbox appropriate to its threat level.
+2. Do not give the agent write access to the configured Northstar data directory when
+   treating it as adversarial.
+3. Review every request's exact grants and reason before typing the TTY challenge.
+4. Treat `INTEGRITY_FAILURE` as an incident: stop the run, inspect the tree and
+   authority, then repair wiring or deliberately re-initialise.
+5. Commit the readable `.northstar/` mirrors for review, while remembering that the
+   runtime authority is external.

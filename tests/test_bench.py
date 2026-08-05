@@ -125,10 +125,28 @@ def test_deleting_a_file_is_a_step(tmp_path: Path):
     assert not (tmp_path / "a.py").exists()
 
 
-def test_journal_replays_as_a_trajectory(governed):
-    """The bridge from scripted cases to real agent runs."""
-    from northstar.adapters import handle
+def test_journal_replays_only_content_complete_snapshots(governed, monkeypatch):
     import io
+
+    from northstar.adapters import handle
+
+    project, _, _ = governed
+    monkeypatch.setenv("NORTHSTAR_CAPTURE_REPLAY", "1")
+    write(project, "src/db.py", "def connect():\n    return False\n")
+    handle(
+        {"hook_event_name": "PostToolUse", "tool_name": "Edit", "tool_input": {"file_path": "src/db.py"}},
+        project,
+        stderr=io.StringIO(),
+    )
+    steps = bench.from_journal(project)
+    assert any(s.path == "src/db.py" and "False" in (s.content or "") for s in steps)
+    assert all(s.tool == "Edit" for s in steps)
+
+
+def test_incomplete_legacy_journal_is_rejected(governed):
+    import io
+
+    from northstar.adapters import handle
 
     project, _, _ = governed
     handle(
@@ -136,10 +154,10 @@ def test_journal_replays_as_a_trajectory(governed):
         project,
         stderr=io.StringIO(),
     )
-    steps = bench.from_journal(project)
-    assert [s.path for s in steps] == ["tests/test_auth.py"]
-    assert steps[0].violates
-    assert steps[0].tool == "Edit"
+    import pytest
+
+    with pytest.raises(ValueError, match="no replay snapshots"):
+        bench.from_journal(project)
 
 
 def test_journal_replay_of_a_clean_run_is_empty(governed):
@@ -156,6 +174,8 @@ def test_cases_cover_every_check_kind():
         checks.PUBLIC_API,
         checks.MODULE_EDGE,
         checks.SCOPE,
+        checks.INTEGRITY,
+        checks.GOVERNANCE,
     }
 
 

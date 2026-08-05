@@ -1,11 +1,28 @@
 name: CI
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -26,7 +43,7 @@ jobs:
 
       # Coverage is gated at 95% in pyproject.toml, so this fails the build on its own.
       - name: Test
-        run: pytest --cov=northstar --cov-report=term-missing
+        run: python -m pytest --cov=northstar --cov-report=term-missing
 
   bench:
     runs-on: ubuntu-latest
@@ -55,3 +72,28 @@ jobs:
 
       - name: Publish the table in the job summary
         run: cat bench.md >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    needs: [lint, test, bench]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - name: Build wheel and source distribution
+        run: python -m build --sdist --wheel
+      - name: Validate package metadata
+        run: python -m twine check dist/*
+      - name: Clean-install smoke test
+        run: |
+          python -m venv /tmp/northstar-smoke
+          /tmp/northstar-smoke/bin/pip install dist/*.whl
+          /tmp/northstar-smoke/bin/python -c "import northstar; assert northstar.__version__ == '0.2.0'"
+          /tmp/northstar-smoke/bin/northstar --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error

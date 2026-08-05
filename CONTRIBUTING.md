@@ -4,11 +4,12 @@
 git clone https://github.com/Jairogelpi/northstar
 cd northstar
 pip install -e ".[dev]"
-pytest --cov=northstar --cov-report=term-missing
+python -m pytest --cov=northstar --cov-report=term-missing
+ruff check src tests
 ```
 
-Coverage is gated at 95% in `pyproject.toml`, so a bare `pytest` run fails the
-build if a change is untested.
+Coverage is gated at 95% when the coverage plugin is enabled, as it is in CI and in
+the command above.
 
 ## The one rule
 
@@ -44,14 +45,24 @@ which is the correct answer.
 ## Adding a compiler rule
 
 Add a `Rule` in `compiler.py`, then add labelled cases to `CORPUS` in
-`tests/test_compiler.py`. Precision and recall are asserted at 0.95 and must not
-regress. A rule that fires on descriptive prose is worse than a missing rule: it
-blocks work nobody asked to block.
+`tests/test_compiler.py`. Its score is an internal regression threshold, not a held-out
+accuracy claim. A rule that fires on descriptive prose is worse than a missing rule:
+it blocks work nobody asked to block.
+
+## Changing trusted state
+
+- Runtime reads must go through `Authority.load()` and fail closed on
+  `IntegrityError`.
+- Never add a fallback from external authority to the working-tree mirror.
+- A new governance mutation needs an interactive human path and adversarial tests for
+  its agent-shell equivalent.
+- Unknown tool capability remains blocking until explicitly classified.
 
 ## Style
 
 - Match the surrounding code. Comments explain *why*, not *what*.
-- No new runtime dependencies without a strong reason. The package ships with one.
+- No new runtime dependencies without a strong reason. PyYAML parses contracts;
+  cryptography provides Ed25519 approval signatures and encrypted private keys.
 - Tests are named for the behaviour they pin, not the function they call.
 
 ## Reporting a false block
@@ -59,3 +70,6 @@ blocks work nobody asked to block.
 The most valuable bug report this project can get. Include the contract, the action
 that was refused, and why it should have been allowed. False blocks are tracked as a
 benchmark metric precisely so they cannot be dismissed as user error.
+
+Release maintainers should follow [docs/releasing.md](docs/releasing.md); local
+artifact uploads and long-lived PyPI tokens are intentionally outside the process.

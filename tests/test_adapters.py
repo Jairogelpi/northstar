@@ -75,7 +75,7 @@ def test_pre_hook_blocks_a_protected_write(governed):
     assert code == EXIT_BLOCK
     assert "NORTHSTAR" in message
     assert "protected" in message
-    assert 'northstar amend --grant "protected_path:tests/test_auth.py"' in message
+    assert 'northstar request --grant "protected_path:tests/test_auth.py"' in message
     assert "do not edit .northstar/" in message
 
 
@@ -96,7 +96,7 @@ def test_a_non_amendable_refusal_offers_no_grant(governed):
         {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "tool_input": {"command": "northstar amend --grant dependency:x --reason y"},
+            "tool_input": {"command": "northstar approve deadbeef"},
         },
         project,
     )
@@ -122,6 +122,22 @@ def test_pre_hook_allows_an_ordinary_write(governed):
         project,
     )
     assert code == EXIT_OK and message == ""
+
+
+def test_nested_cwd_cannot_change_project_identity_or_escape_with_traversal(governed):
+    project, _, _ = governed
+    nested = project / "src"
+    code, message = run(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "../.northstar/oracle.json"},
+            "cwd": str(nested),
+        },
+        nested,
+    )
+    assert code == EXIT_BLOCK
+    assert "protected" in message
 
 
 def test_allowed_gate_calls_are_not_journalled(governed):
@@ -177,12 +193,12 @@ def test_ungoverned_project_is_left_alone(tmp_path: Path):
     assert code == EXIT_OK and message == ""
 
 
-def test_missing_oracle_does_not_block_post_checks(project: Path):
+def test_legacy_or_missing_oracle_fails_closed(project: Path):
     from northstar.contract import default_contract
 
     default_contract("x").save(project)
     code, _ = run({"hook_event_name": "PostToolUse", "tool_name": "Edit"}, project)
-    assert code == EXIT_OK
+    assert code == EXIT_BLOCK
 
 
 def test_hook_rereads_the_contract_every_call(governed):
@@ -191,8 +207,13 @@ def test_hook_rereads_the_contract_every_call(governed):
     payload = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": {"file_path": "src/db.py"}}
     assert run(payload, project)[0] == EXIT_OK
 
-    contract.constraints["protected_paths"].append("src/db.py")
-    contract.save(project)
+    from northstar.authority import Authority
+
+    authority = Authority.open(project, required=True)
+    assert authority is not None
+    live, oracle = authority.load()
+    live.constraints["protected_paths"].append("src/db.py")
+    authority.persist(live, oracle)
     assert run(payload, project)[0] == EXIT_BLOCK
 
 

@@ -24,9 +24,15 @@ RULES = (FORBIDDEN, APPROVAL_REQUIRED, ALLOWED)
 
 CONTRACT_FILE = "contract.yaml"
 
-#: Paths an agent may never write, whatever the contract says. The grader must be
-#: unreachable by construction: an agent that can edit its own oracle has none.
-HARD_PROTECTED = [".northstar/**"]
+#: Working-tree mirrors and wiring an agent may never write, whatever the contract
+#: says. The external authority verifies these independently and fails closed.
+HARD_PROTECTED = [
+    ".northstar/**",
+    ".claude/settings.json",
+    ".codex/config.toml",
+    "AGENTS.md",
+    "CLAUDE.md",
+]
 
 DEFAULT_CONSTRAINTS: dict[str, Any] = {
     "protected_paths": [],
@@ -38,6 +44,9 @@ DEFAULT_CONSTRAINTS: dict[str, Any] = {
     "behavior": {"change": ALLOWED, "command": []},
     "scope": {"max_files": 0, "max_lines": 0},
     "commands": {"forbidden": []},
+    # Capability-first: tools not positively classified are blocking by default.
+    # MCP names are open-ended, so a fixed write-tool list cannot be a boundary.
+    "tools": {"unknown": APPROVAL_REQUIRED, "read_only": [], "mutating": []},
 }
 
 
@@ -51,7 +60,7 @@ def _utcnow() -> str:
 
 @dataclass
 class Amendment:
-    """A signed, scoped widening of the contract.
+    """A scoped widening authenticated by the external authority.
 
     Signing re-baselines only the named grants; every other invariant stays frozen
     against the original baseline. Without that, one exception would read as a
@@ -62,6 +71,8 @@ class Amendment:
     reason: str
     grants: list[str]
     signed_by: str = "human"
+    approval_id: str | None = None
+    signature: str | None = None
     at: str = field(default_factory=_utcnow)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +81,8 @@ class Amendment:
             "at": self.at,
             "reason": self.reason,
             "signed_by": self.signed_by,
+            "approval_id": self.approval_id,
+            "signature": self.signature,
             "grants": list(self.grants),
         }
 
@@ -81,6 +94,8 @@ class Amendment:
                 reason=str(data["reason"]),
                 grants=[str(g) for g in data.get("grants", [])],
                 signed_by=str(data.get("signed_by", "human")),
+                approval_id=str(data["approval_id"]) if data.get("approval_id") else None,
+                signature=str(data["signature"]) if data.get("signature") else None,
                 at=str(data.get("at", _utcnow())),
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -117,6 +132,7 @@ class Contract:
             ("dependencies", "additions"),
             ("module_graph", "new_edges"),
             ("behavior", "change"),
+            ("tools", "unknown"),
         ):
             value = self.constraints[section].get(key)
             if value not in RULES:
@@ -127,10 +143,13 @@ class Contract:
                 raise ContractError(f"scope.{key} must be a non-negative int, got {value!r}")
         if not isinstance(self.constraints["protected_paths"], list):
             raise ContractError("protected_paths must be a list of globs")
+        for key in ("read_only", "mutating"):
+            if not isinstance(self.constraints["tools"].get(key), list):
+                raise ContractError(f"tools.{key} must be a list of tool-name globs")
 
     @property
     def version(self) -> int:
-        """v1 at creation; every signed amendment bumps it."""
+        """v1 at creation; every approved amendment bumps it."""
         return 1 + len(self.amendments)
 
     # -- queries -----------------------------------------------------------
@@ -156,13 +175,21 @@ class Contract:
     def api_scope(self) -> list[str]:
         return [normalize(p) for p in self.constraints["public_api"].get("scope", [])]
 
+    @property
+    def read_only_tools(self) -> list[str]:
+        return [str(name).lower() for name in self.constraints["tools"].get("read_only", [])]
+
+    @property
+    def mutating_tools(self) -> list[str]:
+        return [str(name).lower() for name in self.constraints["tools"].get("mutating", [])]
+
     def rule(self, section: str, key: str) -> str:
         return str(self.constraints[section][key])
 
     def is_granted(self, kind: str, identifier: str) -> Amendment | None:
-        """Has a signed amendment already authorised this exact divergence?
+        """Has an approved amendment already authorised this exact divergence?
 
-        Grants are `kind:identifier` and may glob, so a human can sign
+        Grants are `kind:identifier` and may glob, so a human can approve
         `public_api:src/auth.py::*` without reopening the whole API surface.
         """
         target = f"{kind}:{identifier}"
@@ -172,12 +199,24 @@ class Contract:
                     return amendment
         return None
 
-    def amend(self, reason: str, grants: list[str], signed_by: str = "human") -> Amendment:
+    def amend(
+        self,
+        reason: str,
+        grants: list[str],
+        signed_by: str = "human",
+        approval_id: str | None = None,
+    ) -> Amendment:
         if not reason.strip():
             raise ContractError("an amendment needs a reason")
         if not grants:
             raise ContractError("an amendment needs at least one grant")
-        amendment = Amendment(version=self.version + 1, reason=reason, grants=list(grants), signed_by=signed_by)
+        amendment = Amendment(
+            version=self.version + 1,
+            reason=reason,
+            grants=list(grants),
+            signed_by=signed_by,
+            approval_id=approval_id,
+        )
         self.amendments.append(amendment)
         return amendment
 
@@ -234,7 +273,7 @@ TEMPLATE = """\
 objective: {objective}
 
 constraints:
-  # Files the agent must never touch. The grader (.northstar/**) is always protected.
+  # Files the agent must never touch. Northstar mirrors and wiring are always protected.
   protected_paths:
     - tests/**
 
@@ -258,6 +297,12 @@ constraints:
     forbidden:
       - "git push*"
       - "rm -rf*"
+
+  # Unknown/MCP tools are blocked pending approval unless classified here.
+  tools:
+    unknown: approval_required
+    read_only: []
+    mutating: []
 """
 
 

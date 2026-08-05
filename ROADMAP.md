@@ -1,56 +1,76 @@
 # Roadmap
 
-Ordered by what most limits the project's central claim, not by what is easiest.
+Ordered by the evidence missing from the product's central claim, not by feature count.
 
-## Shipped (v0.1)
+## R1 integrity boundary (v0.2, implemented)
 
-- Frozen oracle at t=0: file hashes, API surface, dependency set, module graph.
-- Six deterministic checks, all state-versus-baseline.
-- Behavioural oracle: test outcomes frozen as an executable witness.
-- Human-signed amendments with partial re-baseline.
-- Rule-based intent compiler with measured precision/recall.
-- Claude Code and Codex adapters, zero configuration.
-- IntentDriftBench: 12 trajectories, 7 metrics, re-run by CI on every commit.
+- External canonical authority with readable working-tree mirrors.
+- HMAC-sealed contract, oracle, journal, metadata and mirror digests.
+- Fail-closed loading for deletion, corruption, partial writes and wiring loss.
+- One-time request → separate interactive approval → authenticated amendment chain.
+- Human-confirmed full re-baseline; agent-shell governance commands denied.
+- Capability-first handling of unknown/MCP tools, plus symlink/path traversal resolution.
+- Adversarial scripted cases for shell, Python, redirection, custom MCP, hook deletion,
+  direct API mutation and self-rebaseline.
+- Opt-in content-complete replay; verdict-only journals are explicitly not replayable.
+- Wheel/sdist smoke CI and tag-driven PyPI, SBOM, provenance and release assets.
 
-## Next
+## Evidence still required
 
-### Live-agent benchmark numbers
+### LiveAgentBench
 
-The benchmark's trajectories are scripted. That measures what the runtime *catches*,
-not how often a real model drifts — and the second number is the interesting one.
-`bench.from_journal()` already replays a real session, so the missing piece is a
-harness that drives Claude Code and Codex through a fixed task set and collects the
-journals.
+Run a fixed, independently annotated task set multiple times with Claude Code and
+Codex, with randomised arm assignment and paired runs with/without Northstar. Report:
 
-Blocking on: a task set that is realistic without being enormous.
+- hard-constraint violations based on human labels, not Northstar findings;
+- silent drift, false blocks, completion, escalation and detection latency;
+- model/agent versions, prompts, seeds where available and raw content-complete traces;
+- confidence intervals and per-task results, not only an aggregate percentage.
 
-### Prevention beyond protected paths
+The current environment has neither agent executable nor credentials, so no live
+numbers are fabricated in this repository. IntentDriftBench remains internal
+regression evidence until this study is published. See the
+[LiveAgentBench protocol](docs/live-agent-benchmark.md).
 
-The pre-tool gate blocks path writes before they land. A changed signature or an
-added dependency can currently only be *detected* after the edit, which is why the
-violation rate in the benchmark falls to 42% rather than to 0%. Gating on the
-*content* of a proposed edit — parsing the new text before it is written — would
-close that gap.
+### Independent compiler evaluation
 
-### Tree-sitter grammars
+The 15 labelled descriptions in `tests/test_compiler.py` are a regression corpus, not
+a held-out estimate. Build a larger English/Spanish set authored and labelled by
+people who did not write the compiler rules, including paraphrases, negation,
+conflicting constraints and adversarial phrasing. Publish the corpus and confusion
+matrix before making an accuracy claim.
 
-JS/TS, Go, Rust and Java use pattern extractors today. They see the declarations
-people actually write and miss the clever ones. Real grammars make those surfaces
-exact instead of heuristic. Worth doing the moment a real project reports a miss.
+### External adoption
 
-## Considered and deferred
+Pilot R1 on repositories not authored for Northstar. Track installation success,
+false blocks, approval quality, bypasses, runtime overhead and abandonment. Issues,
+stars and forks are not effectiveness evidence; reproducible external runs are.
 
-**LLM intent compiler.** A model translating prose to YAML mistranslates, and a wrong
-contract blocks for the wrong reason — which costs more trust than it buys. It ships
-if and when its translation accuracy is a measured number that beats the rule-based
-compiler on the same corpus, not before.
+## Security upgrades
 
-**Semantic drift judging.** Asking a model at step 50 whether step 50 looks off-course
-puts the judge in the same degraded context as the agent it judges. Northstar's whole
-design is the opposite bet. If this is ever added it will be advisory-only, and it
-will never be able to block on its own.
+### Authority daemon / OS-backed key
 
-**Rollback.** Northstar reports where the trajectory left the contract. Undoing it is
-git's job, and wrapping git here would be a worse git.
+The current HMAC key is outside the working tree but accessible to an unrestricted
+process running as the same OS user. A local daemon under a separate account, OS
+keychain-backed signing, or hardware-backed approval would turn tamper evidence into a
+stronger separation boundary. This is required before claiming malicious-agent
+resistance without an external sandbox.
 
-**A SaaS console.** Not before the local runtime is worth using.
+### Content-aware pre-write gates
+
+Protected paths can be prevented before the write. API, dependency and graph drift are
+usually detected after an edit lands. Parse proposed content for supported Edit/Write
+shapes and reject a violating candidate before execution, while retaining post-state
+checks as the backstop.
+
+### Exact language parsers
+
+Python is AST-based. JavaScript/TypeScript, Go, Rust and Java remain heuristic. Add
+real grammars when external cases justify the dependency and maintenance cost.
+
+## Deliberately deferred
+
+- **LLM-as-judge blocking.** It would share the same degraded context and introduce
+  arguable refusals. Any future semantic judge stays advisory.
+- **Rollback.** Northstar reports drift; git owns recovery.
+- **SaaS console.** Not before live-agent and external-adoption evidence exists.

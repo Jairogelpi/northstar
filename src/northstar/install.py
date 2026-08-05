@@ -1,21 +1,17 @@
-"""Zero-configuration wiring for Claude Code and Codex.
+"""Project-local wiring for Claude Code and Codex.
 
 Idempotent by construction: installing twice changes nothing, and existing user
 settings are merged, never overwritten.
 
-Honest about the difference between the two: Claude Code exposes a pre-tool hook
-that can *block*, so northstar stops the write before it happens. Codex has no
-equivalent blocking hook, so there it runs as post-hoc detection plus an
-instruction block the agent reads. Detection without prevention is still worth
-having -- but it is not the same guarantee, and pretending otherwise would be
-the exact dishonesty this project exists to avoid.
+Both agents expose blocking pre-tool and observing post-tool hooks. Codex requires
+the human to trust project-local hooks through ``/hooks`` before they run; writing a
+configuration file is not the same as activating an unreviewed command.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -64,22 +60,6 @@ def hook_command(root: Path) -> str:
     """Shell command bound to one checkout, quoted for the current platform."""
     argv = ["northstar", "--root", str(Path(root).resolve()), "hook"]
     return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-
-
-def codex_notify(root: Path) -> str:
-    """TOML assignment for a root-bound Codex notification command."""
-    return "notify = " + json.dumps(
-        ["northstar", "--root", str(Path(root).resolve()), "hook"]
-    )
-
-
-def _replace_notify(previous: str, body: str) -> str:
-    if re.search(r"(?m)^\s*notify\s*=.*$", previous):
-        # A replacement string would interpret Windows backslashes a second
-        # time. The callback returns the JSON/TOML text literally.
-        return re.sub(r"(?m)^\s*notify\s*=.*$", lambda _: body, previous)
-    separator = "\n" if previous and not previous.endswith("\n") else ""
-    return previous + separator + body + "\n"
 
 
 def _hook_entry(root: Path) -> dict:
@@ -136,17 +116,55 @@ def install_agents_md(root: Path, filename: str = "AGENTS.md") -> Path:
 
 
 def install_codex(root: Path) -> list[Path]:
-    """Codex reads AGENTS.md; the notify hook gives post-hoc journalling."""
+    """Register native blocking/observing Codex hooks plus agent instructions."""
     written = [install_agents_md(root, "AGENTS.md")]
-    config = Path(root) / ".codex" / "config.toml"
-    body = codex_notify(root)
-    config.parent.mkdir(parents=True, exist_ok=True)
-    previous = read_text(config) if config.exists() else ""
-    updated = _replace_notify(previous, body)
-    if updated != previous:
-        config.write_text(updated, encoding="utf-8")
-    written.append(config)
+    hooks_path = Path(root) / ".codex" / "hooks.json"
+    document = _load_json(hooks_path)
+    document.setdefault("description", "Northstar invariant enforcement hooks.")
+    hooks = document.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        document["hooks"] = hooks
+    for event in ("PreToolUse", "PostToolUse"):
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            groups = []
+            hooks[event] = groups
+        if not _already_installed(groups, root):
+            groups.append(_hook_entry(root))
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _remove_legacy_codex_notify(root)
+    written.append(hooks_path)
     return written
+
+
+def _remove_legacy_codex_notify(root: Path) -> None:
+    """Remove only the ignored project-local notify entries Northstar generated."""
+    config = Path(root) / ".codex" / "config.toml"
+    if not config.exists():
+        return
+    lines = read_text(config).splitlines(keepends=True)
+    kept: list[str] = []
+    changed = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("notify") and "=" in stripped:
+            try:
+                value = json.loads(stripped.split("=", 1)[1].strip())
+            except json.JSONDecodeError:
+                value = None
+            if (
+                isinstance(value, list)
+                and len(value) >= 2
+                and value[0] == "northstar"
+                and value[-1] == "hook"
+            ):
+                changed = True
+                continue
+        kept.append(line)
+    if changed:
+        config.write_text("".join(kept), encoding="utf-8")
 
 
 def install(root: Path, agents: list[str] | None = None) -> list[Path]:
@@ -186,10 +204,18 @@ def integrity_issues(root: Path, expected: list[str]) -> list[str]:
             text = read_text(path)
             if AGENTS_BEGIN not in text or AGENTS_END not in text:
                 issues.append(f"{relative} has no Northstar instruction block")
+        elif normal == ".codex/hooks.json":
+            data = _load_json(path)
+            hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
+            for event in ("PreToolUse", "PostToolUse"):
+                groups = hooks.get(event, []) if isinstance(hooks, dict) else []
+                if not isinstance(groups, list) or not _already_installed(groups, root):
+                    issues.append(f"{relative} has no {event} Northstar hook")
         elif normal == ".codex/config.toml":
-            text = read_text(path)
-            if codex_notify(root) not in text:
-                issues.append(f"{relative} has no Northstar notify hook")
+            issues.append(
+                f"{relative} uses legacy project-local notify wiring, which Codex ignores; "
+                "run `northstar install --agent codex` from a human terminal"
+            )
     return issues
 
 
@@ -200,6 +226,6 @@ def discover_wiring(root: Path) -> list[Path]:
         ".claude/settings.json",
         "CLAUDE.md",
         "AGENTS.md",
-        ".codex/config.toml",
+        ".codex/hooks.json",
     ]
     return [root / relative for relative in candidates if not integrity_issues(root, [relative])]

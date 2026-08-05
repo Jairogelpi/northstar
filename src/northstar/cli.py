@@ -123,6 +123,8 @@ def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
         out.write(f"  UNKNOWN: {len(oracle.unknown)} file(s) could not be parsed; not covered\n")
     for path in written:
         out.write(f"  wired: {Path(path).name}\n")
+    if root / ".codex" / "hooks.json" in [Path(path) for path in written]:
+        out.write("  Codex: review and trust the project hooks with `/hooks` before relying on them\n")
     out.write(f"  readable mirror: {root / '.northstar' / 'contract.yaml'}\n")
     out.write(f"  sealed authority: {authority.path}\n")
     return EXIT_OK
@@ -272,14 +274,25 @@ def cmd_install(args: argparse.Namespace, out: TextIO) -> int:
     written = install_mod.install(root, args.agent or None)
     if authority is not None:
         previous = [root / p for p in authority.metadata().get("wiring", [])]
+        if args.agent is None or "codex" in args.agent:
+            # v0.2.0 briefly used project-local `notify`, a key Codex ignores.
+            # The approved repair replaces that wiring with native hooks.json.
+            previous = [
+                path
+                for path in previous
+                if path.resolve() != (root / ".codex" / "config.toml").resolve()
+            ]
+        wiring = list(dict.fromkeys(path.resolve() for path in [*previous, *written]))
         authority.persist(
             contract,
             oracle,
-            wiring=[*previous, *written],
+            wiring=wiring,
             check_wiring=False,
         )
     for path in written:
         out.write(f"northstar: wired {path}\n")
+    if root / ".codex" / "hooks.json" in [Path(path) for path in written]:
+        out.write("northstar: Codex hook trust pending; review `/hooks` in Codex\n")
     return EXIT_OK
 
 

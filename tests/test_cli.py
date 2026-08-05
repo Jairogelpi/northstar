@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from northstar import cli
+from northstar.authority import Authority, IntegrityError
 from northstar.contract import Contract
 from northstar.util import read_text
 
@@ -197,6 +198,38 @@ def test_governed_wiring_repair_requires_the_approval_secret(initialised: Path, 
     code, text = run(["--root", str(initialised), "install", "--agent", "claude"])
     assert code == cli.EXIT_OK
     assert "settings.json" in text
+
+
+def test_install_migrates_governed_legacy_codex_notify(initialised: Path, monkeypatch):
+    authority = Authority.open(initialised, required=True)
+    assert authority is not None
+    contract, oracle = authority.load()
+    config = write(
+        initialised,
+        ".codex/config.toml",
+        'model = "gpt-5"\nnotify = ["northstar", "--root", "/old/repo", "hook"]\n',
+    )
+    previous = [initialised / path for path in authority.metadata()["wiring"]]
+    legacy_wiring = [
+        config if path == initialised / ".codex" / "hooks.json" else path for path in previous
+    ]
+    authority.persist(contract, oracle, wiring=legacy_wiring)
+    (initialised / ".codex" / "hooks.json").unlink()
+
+    with pytest.raises(IntegrityError, match="legacy project-local notify wiring"):
+        authority.load()
+
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+    code, text = run(["--root", str(initialised), "install", "--agent", "codex"])
+
+    assert code == cli.EXIT_OK
+    assert "hook trust pending" in text
+    authority.load()
+    wiring = authority.metadata()["wiring"]
+    assert ".codex/hooks.json" in wiring
+    assert ".codex/config.toml" not in wiring
+    assert len(wiring) == len(set(wiring))
+    assert "notify" not in read_text(config)
 
 
 def test_hook_command_reads_stdin(initialised: Path, monkeypatch):

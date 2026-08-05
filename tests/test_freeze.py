@@ -10,7 +10,6 @@ from northstar.freeze import Oracle, freeze, oracle_path
 
 from .conftest import write
 
-
 # ------------------------------------------------------------- api extraction
 
 

@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build packaging twine
+      - run: python -m build --sdist --wheel
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          import email, glob, os, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          with zipfile.ZipFile(wheel) as archive:
+              name = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+              version = email.message_from_bytes(archive.read(name))["Version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"tag {tag!r} does not match package version {version!r}")
+          PY
+      - run: python -m twine check dist/*
+      - name: Clean-install smoke test
+        run: |
+          python -m venv /tmp/northstar-release-smoke
+          /tmp/northstar-release-smoke/bin/pip install dist/*.whl
+          /tmp/northstar-release-smoke/bin/northstar --help
+      - name: Generate CycloneDX SBOM
+        run: |
+          python - <<'PY'
+          import email, glob, json, pathlib, uuid, zipfile
+          from packaging.requirements import Requirement
+          wheel = glob.glob("dist/*.whl")[0]
+          with zipfile.ZipFile(wheel) as archive:
+              metadata_name = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+              metadata = email.message_from_bytes(archive.read(metadata_name))
+          requirements = [Requirement(item) for item in metadata.get_all("Requires-Dist", [])]
+          requirements = [
+              item for item in requirements
+              if item.marker is None or item.marker.evaluate({"extra": ""})
+          ]
+          document = {
+              "bomFormat": "CycloneDX",
+              "specVersion": "1.5",
+              "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+              "version": 1,
+              "metadata": {"component": {
+                  "type": "library", "name": metadata["Name"], "version": metadata["Version"]
+              }},
+              "components": [
+                  {"type": "library", "name": item.name}
+                  for item in requirements
+              ],
+          }
+          pathlib.Path("sbom.cdx.json").write_text(json.dumps(document, indent=2) + "\n")
+          PY
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*
+            sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-distributions
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-sbom
+          path: sbom.cdx.json
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/northstar-runtime/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  github-release:
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-sbom
+          path: .
+      - name: Create GitHub release with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* sbom.cdx.json --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

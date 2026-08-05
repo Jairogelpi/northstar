@@ -17,9 +17,9 @@ Two properties make this honest:
 * It captures the behaviour that *exists*, not the behaviour someone hoped for. A
   test failing at baseline is frozen as failing; making it pass is a change of
   behaviour like any other, and the human is told rather than congratulated.
-* The witness is frozen outside the working tree and the test files are protected,
-  so the agent cannot make the oracle agree with it. An agent that can edit its own
-  grader has none.
+* The witness is frozen in sealed state outside the working tree and the test files
+  are protected. Tampering is blocking and evident while the authority remains
+  outside the agent's write boundary; this is not a substitute for an OS sandbox.
 
 ponytail: pytest and `go test` shapes only, parsed from stdout. Other runners get
 UNKNOWN until someone actually needs them.
@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,8 +41,8 @@ SKIPPED = "skipped"
 
 #: Runner -> (probe that decides whether it applies, argv).
 RUNNERS: tuple[tuple[str, str, list[str]], ...] = (
-    ("pytest", "tests", ["pytest", "-q", "--no-header", "-rA", "--timeout=120"]),
-    ("pytest", "test", ["pytest", "-q", "--no-header", "-rA", "--timeout=120"]),
+    ("pytest", "tests", [sys.executable, "-m", "pytest", "-q", "--no-header", "-rA"]),
+    ("pytest", "test", [sys.executable, "-m", "pytest", "-q", "--no-header", "-rA"]),
     ("go", "go.mod", ["go", "test", "./...", "-v"]),
 )
 
@@ -86,7 +87,7 @@ def detect(root: Path) -> list[str] | None:
     """Pick a test command for this project, or None if there is nothing to run."""
     root = Path(root)
     for _, probe, argv in RUNNERS:
-        if (root / probe).exists() and shutil.which(argv[0]):
+        if (root / probe).exists() and (Path(argv[0]).exists() or shutil.which(argv[0])):
             return argv
     return None
 
@@ -119,9 +120,11 @@ def capture(root: Path, command: list[str] | None = None, timeout: int = 600) ->
     execute yields an error, not an empty -- and therefore vacuously satisfied --
     set of outcomes.
     """
-    argv = command or detect(root)
+    argv = list(command or detect(root) or [])
     if not argv:
         return Run({}, [], error="no supported test runner found")
+    if argv[0].lower() in {"python", "python3", "python.exe"} and argv[1:3] == ["-m", "pytest"]:
+        argv[0] = sys.executable
     try:
         completed = subprocess.run(
             argv,
@@ -139,7 +142,7 @@ def capture(root: Path, command: list[str] | None = None, timeout: int = 600) ->
         return Run({}, argv, error=str(exc))
 
     output = (completed.stdout or "") + "\n" + (completed.stderr or "")
-    parser = parse_go if argv[0] == "go" else parse_pytest
+    parser = parse_go if Path(argv[0]).name == "go" else parse_pytest
     outcomes = parser(output)
     if not outcomes:
         return Run({}, argv, error="test output could not be parsed")

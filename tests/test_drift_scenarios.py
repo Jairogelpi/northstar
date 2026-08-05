@@ -10,16 +10,16 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-import pytest
 import yaml
 
 from northstar import evidence, policy
 from northstar.adapters import EXIT_BLOCK, EXIT_OK, handle
+from northstar.authority import Authority
 from northstar.contract import Contract, default_contract
 from northstar.freeze import freeze
 from northstar.policy import Decision
 
-from .conftest import SERVICE, write
+from .conftest import APPROVAL_SECRET, SERVICE, write
 
 
 def pre(root: Path, tool: str, params: dict) -> tuple[int, str]:
@@ -37,8 +37,12 @@ def post(root: Path) -> tuple[int, str]:
 
 
 def govern(root: Path, contract: Contract) -> None:
-    contract.save(root)
-    freeze(root, contract.api_scope).save(root)
+    Authority.bootstrap(
+        root,
+        contract,
+        freeze(root, contract.api_scope),
+        approval_passphrase=APPROVAL_SECRET,
+    )
 
 
 # 1 ---------------------------------------------------------------------------
@@ -65,7 +69,8 @@ def test_scope_widens_without_asking(project: Path):
     for index in range(5):
         write(project, f"src/mod{index}.py", "x = 1\n")
 
-    verdict = policy.evaluate(Contract.load(project), _oracle(project), project)
+    contract, oracle = _bundle(project)
+    verdict = policy.evaluate(contract, oracle, project)
     assert verdict.decision is Decision.REQUIRE_APPROVAL
     assert any(j.finding and j.finding.kind == "scope" for j in verdict.judgements)
 
@@ -132,7 +137,8 @@ def test_unrequested_refactor_rewires_the_module_graph(project: Path):
     govern(project, contract)
 
     write(project, "src/db.py", "from auth.service import login\n\n\ndef connect():\n    return True\n")
-    verdict = policy.evaluate(Contract.load(project), _oracle(project), project)
+    contract, oracle = _bundle(project)
+    verdict = policy.evaluate(contract, oracle, project)
     assert verdict.decision is Decision.REQUIRE_APPROVAL
     assert any(j.finding and "db->auth.service" in j.finding.identifier for j in verdict.judgements)
 
@@ -173,8 +179,12 @@ def test_constraint_survives_context_compaction(governed):
 def test_one_exception_is_not_read_as_general_permission(governed):
     """A signed grant re-baselines only what it names."""
     project, contract, _ = governed
-    contract.amend("agreed: login takes a tenant now", ["public_api:src/auth/service.py::login"])
-    contract.save(project)
+    authority = Authority.open(project, required=True)
+    assert authority is not None
+    request = authority.create_request(
+        "agreed: login takes a tenant now", ["public_api:src/auth/service.py::login"]
+    )
+    authority.approve_request(request, lambda data: APPROVAL_SECRET)
 
     write(
         project,
@@ -195,8 +205,13 @@ def test_the_agent_cannot_widen_the_contract_itself(governed):
     code, message = pre(
         project, "Bash", {"command": 'northstar amend --grant "protected_path:tests/**" --reason "easier"'}
     )
+    assert code == EXIT_OK  # this creates only an untrusted request
+    authority = Authority.open(project, required=True)
+    assert authority is not None
+    assert authority.load()[0].version == 1
+    code, message = pre(project, "Bash", {"command": "northstar approve fake-request"})
     assert code == EXIT_BLOCK
-    assert "signed by the human" in message
+    assert "human-only" in message
 
     # nor by rewriting the contract file directly
     assert pre(project, "Write", {"file_path": ".northstar/contract.yaml"})[0] == EXIT_BLOCK
@@ -231,14 +246,17 @@ def test_the_run_is_fully_auditable_afterwards(governed):
     write(project, "pyproject.toml", '[project]\ndependencies = ["requests", "pyyaml", "httpx"]\n')
     assert post(project)[0] == EXIT_BLOCK
 
-    contract.amend("httpx agreed with the human", ["dependency:httpx"])
-    contract.save(project)
-    evidence.record_amendment(project, "httpx agreed with the human", ["dependency:httpx"], 2)
+    authority = Authority.open(project, required=True)
+    assert authority is not None
+    request = authority.create_request("httpx agreed with the human", ["dependency:httpx"])
+    amendment = authority.approve_request(request, lambda data: APPROVAL_SECRET)
+    evidence.record_amendment(project, amendment.reason, amendment.grants, amendment.version)
 
     assert post(project)[0] == EXIT_OK
 
-    final = policy.evaluate(Contract.load(project), oracle, project)
-    receipt = evidence.build_receipt(project, Contract.load(project), oracle, final)
+    live_contract, live_oracle = authority.load()
+    final = policy.evaluate(live_contract, live_oracle, project)
+    receipt = evidence.build_receipt(project, live_contract, live_oracle, final)
 
     assert receipt["contract_version"] == 2
     assert receipt["final_verdict"]["decision"] == "ALLOW"
@@ -265,9 +283,13 @@ def test_detection_happens_at_the_step_that_caused_it(governed):
 
 
 def _oracle(root: Path):
-    from northstar.freeze import Oracle
+    return _bundle(root)[1]
 
-    return Oracle.load(root)
+
+def _bundle(root: Path):
+    authority = Authority.open(root, required=True)
+    assert authority is not None
+    return authority.load()
 
 
 def test_contract_is_human_readable_yaml(governed):

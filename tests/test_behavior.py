@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
-
 from northstar import behavior, checks, policy
 from northstar.behavior import FAILED, PASSED, SKIPPED, capture, compare, detect
 from northstar.contract import Contract
@@ -83,7 +81,9 @@ def test_identical_outcomes_are_silent():
 
 
 def test_detect_finds_pytest_in_a_python_project(project: Path):
-    assert detect(project)[0] == "pytest"
+    command = detect(project)
+    assert command is not None
+    assert command[1:3] == ["-m", "pytest"]
 
 
 def test_detect_returns_none_without_a_suite(tmp_path: Path):

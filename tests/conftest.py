@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from northstar.authority import Authority
 from northstar.contract import Contract, default_contract
 from northstar.freeze import Oracle, freeze
 
@@ -52,12 +53,24 @@ def test_login():
     assert login("a", "b")
 """
 
+APPROVAL_SECRET = "northstar-test-secret"
+
 
 def write(root: Path, relative: str, text: str) -> Path:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+@pytest.fixture(autouse=True)
+def isolated_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Trusted state must never leak between tests or into the developer profile."""
+    monkeypatch.setenv("NORTHSTAR_HOME", str(tmp_path / ".northstar-authority"))
+    monkeypatch.setattr(
+        "northstar.cli.prompt_new_approval_secret",
+        lambda: APPROVAL_SECRET,
+    )
 
 
 @pytest.fixture
@@ -79,7 +92,6 @@ def contract() -> Contract:
 @pytest.fixture
 def governed(project: Path, contract: Contract) -> tuple[Path, Contract, Oracle]:
     """Project with a saved contract and a frozen baseline."""
-    contract.save(project)
     oracle = freeze(project, contract.api_scope)
-    oracle.save(project)
+    Authority.bootstrap(project, contract, oracle, approval_passphrase=APPROVAL_SECRET)
     return project, contract, oracle

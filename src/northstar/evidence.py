@@ -1,7 +1,7 @@
 """The journal and the receipt.
 
 Every decision is appended to a journal; the receipt binds contract, baseline,
-final tree and every signed amendment into one auditable object. The chain of
+final tree and every authenticated amendment into one auditable object. The chain of
 amendments is the point: at the end you can see not only what was built, but
 where the original intent turned out to be wrong and who decided that.
 
@@ -13,25 +13,33 @@ being detected. Blocking at step 50 saves correctness but burns 40 steps.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .authority import Authority
 from .contract import Contract
 from .freeze import Oracle
 from .policy import Decision, Verdict
-from .util import read_text, state_dir
+from .util import iter_source_files, normalize, read_text, state_dir
 
 JOURNAL_FILE = "journal.jsonl"
 RECEIPT_FILE = "receipt.json"
 
 
 def journal_path(root: Path) -> Path:
+    authority = Authority.open(root)
+    if authority is not None:
+        return authority.journal_path
     return state_dir(root) / JOURNAL_FILE
 
 
 def receipt_path(root: Path) -> Path:
+    authority = Authority.open(root)
+    if authority is not None:
+        return authority.receipt_path
     return state_dir(root) / RECEIPT_FILE
 
 
@@ -56,6 +64,9 @@ class Entry:
 
 
 def read_journal(root: Path) -> list[Entry]:
+    authority = Authority.open(root)
+    if authority is not None:
+        authority.verify()
     path = journal_path(root)
     if not path.exists():
         return []
@@ -86,20 +97,61 @@ def next_step(root: Path) -> int:
     return (entries[-1].step + 1) if entries else 1
 
 
-def record(root: Path, phase: str, tool: str, verdict: Verdict) -> Entry:
+def record(
+    root: Path,
+    phase: str,
+    tool: str,
+    verdict: Verdict,
+    replay: dict[str, Any] | None = None,
+) -> Entry:
+    detail = verdict.to_dict()
+    if replay is not None:
+        detail["replay"] = replay
     entry = Entry(
         step=next_step(root),
         at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         phase=phase,
         tool=tool,
         decision=verdict.decision.value,
-        detail=verdict.to_dict(),
+        detail=detail,
     )
-    path = journal_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry.to_dict(), sort_keys=True) + "\n")
+    line = (json.dumps(entry.to_dict(), sort_keys=True) + "\n").encode("utf-8")
+    authority = Authority.open(root)
+    if authority is not None:
+        authority.append_journal(line)
+    else:
+        path = journal_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as handle:
+            handle.write(line)
     return entry
+
+
+def capture_replay(root: Path, oracle: Oracle, params: dict[str, Any]) -> dict[str, Any] | None:
+    """Opt-in full tree snapshot for reproducible live-agent trajectories.
+
+    Source contents can be sensitive and large, so ordinary journals never contain
+    them.  The explicit environment switch makes that cost visible to the operator.
+    """
+    if os.environ.get("NORTHSTAR_CAPTURE_REPLAY") != "1":
+        return None
+    root = Path(root)
+    present = {normalize(path): root / path for path in iter_source_files(root)}
+    files = [
+        {"path": path, "exists": True, "content": read_text(target)}
+        for path, target in sorted(present.items())
+    ]
+    files.extend(
+        {"path": path, "exists": False, "content": None}
+        for path in sorted(set(oracle.files) - set(present))
+    )
+    command = params.get("command") or params.get("cmd")
+    return {
+        "schema": 1,
+        "kind": "full_tree_snapshot",
+        "files": files,
+        "command": command if isinstance(command, str) else None,
+    }
 
 
 def record_amendment(root: Path, reason: str, grants: list[str], version: int) -> Entry:
@@ -111,10 +163,15 @@ def record_amendment(root: Path, reason: str, grants: list[str], version: int) -
         decision="SIGNED",
         detail={"version": version, "reason": reason, "grants": grants},
     )
-    path = journal_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry.to_dict(), sort_keys=True) + "\n")
+    line = (json.dumps(entry.to_dict(), sort_keys=True) + "\n").encode("utf-8")
+    authority = Authority.open(root)
+    if authority is not None:
+        authority.append_journal(line)
+    else:
+        path = journal_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as handle:
+            handle.write(line)
     return entry
 
 
@@ -163,4 +220,8 @@ def write_receipt(root: Path, receipt: dict[str, Any]) -> Path:
     path = receipt_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+    authority = Authority.open(root)
+    if authority is not None:
+        mirror = state_dir(root) / RECEIPT_FILE
+        mirror.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
     return path

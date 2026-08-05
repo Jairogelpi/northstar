@@ -13,7 +13,14 @@ import tempfile
 from pathlib import Path
 from typing import TextIO
 
-from . import adapters, bench, evidence, install as install_mod, policy
+from . import adapters, bench, evidence, policy
+from . import install as install_mod
+from .authority import (
+    Authority,
+    IntegrityError,
+    interactive_confirmation,
+    prompt_new_approval_secret,
+)
 from .compiler import compile_intent, render
 from .contract import Contract, ContractError, contract_path, default_contract
 from .freeze import Oracle, freeze
@@ -25,11 +32,14 @@ EXIT_ERROR = 3
 
 
 def _root(args: argparse.Namespace) -> Path:
-    return Path(args.root).resolve() if getattr(args, "root", None) else find_root()
+    candidate = Path(args.root).resolve() if getattr(args, "root", None) else Path.cwd()
+    return find_root(candidate)
 
 
 def _load(root: Path) -> tuple[Contract, Oracle]:
-    return Contract.load(root), Oracle.load(root)
+    authority = Authority.open(root, required=True)
+    assert authority is not None
+    return authority.load()
 
 
 # ----------------------------------------------------------------- commands
@@ -68,6 +78,11 @@ def cmd_bench(args: argparse.Namespace, out: TextIO) -> int:
 
 def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
     root = Path(args.root).resolve() if args.root else Path.cwd()
+    target_authority = Authority.for_root(root)
+    if target_authority.path.exists():
+        raise IntegrityError(
+            f"authority already exists at {target_authority.path}; use an approved re-baseline instead"
+        )
     if args.from_task:
         compiled = compile_intent(read_text(Path(args.from_task)))
         contract = compiled.to_contract()
@@ -79,7 +94,7 @@ def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
         contract = default_contract(args.objective)
     if args.behavior:
         contract.constraints["behavior"]["change"] = "forbidden"
-    contract.save(root)
+    approval_passphrase = prompt_new_approval_secret()
     # Wire the agents *before* freezing, so northstar's own files are part of the
     # baseline rather than showing up as the run's first phantom drift.
     written = [] if args.no_install else install_mod.install(root, args.agent or None)
@@ -89,7 +104,13 @@ def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
         capture_behavior=contract.tracks_behavior,
         behavior_command=contract.behavior_command,
     )
-    oracle.save(root)
+    authority = Authority.bootstrap(
+        root,
+        contract,
+        oracle,
+        written,
+        approval_passphrase=approval_passphrase,
+    )
 
     out.write(f'northstar: contract v{contract.version} for "{contract.objective}"\n')
     out.write(
@@ -102,16 +123,59 @@ def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
         out.write(f"  UNKNOWN: {len(oracle.unknown)} file(s) could not be parsed; not covered\n")
     for path in written:
         out.write(f"  wired: {Path(path).name}\n")
-    out.write(f"  edit the contract: {root / '.northstar' / 'contract.yaml'}\n")
+    out.write(f"  readable mirror: {root / '.northstar' / 'contract.yaml'}\n")
+    out.write(f"  sealed authority: {authority.path}\n")
+    return EXIT_OK
+
+
+def cmd_migrate(args: argparse.Namespace, out: TextIO) -> int:
+    """Trust an explicitly reviewed v0.1 local bundle and move it to R1 authority."""
+    root = _root(args)
+    target_authority = Authority.for_root(root)
+    if target_authority.path.exists():
+        raise IntegrityError(f"authority already exists at {target_authority.path}")
+    if not args.accept_existing_state:
+        raise IntegrityError("migration requires --accept-existing-state after human review")
+    contract = Contract.load(root)
+    oracle = Oracle.load(root)
+    approval_passphrase = prompt_new_approval_secret()
+    wiring = install_mod.discover_wiring(root)
+    authority = Authority.bootstrap(
+        root,
+        contract,
+        oracle,
+        wiring,
+        approval_passphrase=approval_passphrase,
+        authenticate_existing_amendments=True,
+    )
+    out.write(f"northstar: migrated contract v{contract.version} to R1 authority\n")
+    out.write(f"  sealed authority: {authority.path}\n")
+    out.write("  existing local state was accepted by the human; future tampering fails closed\n")
+    if not wiring:
+        out.write("  warning: no existing agent wiring found; run `northstar install` from a human terminal\n")
     return EXIT_OK
 
 
 def cmd_freeze(args: argparse.Namespace, out: TextIO) -> int:
     root = _root(args)
-    contract = Contract.load(root)
-    oracle = freeze(root, contract.api_scope)
-    oracle.save(root)
+    authority = Authority.open(root, required=True)
+    assert authority is not None
+    contract, _ = authority.load()
+    request = {
+        "reason": args.reason,
+        "grants": ["rebaseline:entire-oracle"],
+    }
+    passphrase = interactive_confirmation(request)
+    authority.validate_approval_passphrase(passphrase)
+    oracle = freeze(
+        root,
+        contract.api_scope,
+        capture_behavior=contract.tracks_behavior,
+        behavior_command=contract.behavior_command,
+    )
+    authority.persist(contract, oracle)
     out.write(f"northstar: baseline re-frozen ({len(oracle.files)} files, {len(oracle.api)} symbols)\n")
+    out.write(f"  reason: {args.reason}\n")
     return EXIT_OK
 
 
@@ -138,7 +202,7 @@ def cmd_status(args: argparse.Namespace, out: TextIO) -> int:
 
     changed, churn = changed_files(oracle, read_tree(root, contract.api_scope))
     out.write(f'objective: "{contract.objective}"\n')
-    out.write(f"contract:  v{contract.version} ({len(contract.amendments)} signed amendment(s))\n")
+    out.write(f"contract:  v{contract.version} ({len(contract.amendments)} approved amendment(s))\n")
     out.write(f"baseline:  {oracle.base_commit or 'snapshot'} @ {oracle.created}\n")
     out.write(f"changed:   {len(changed)} file(s), ~{churn} line(s)\n")
     out.write(f"verdict:   {verdict.decision.value}\n")
@@ -147,17 +211,34 @@ def cmd_status(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_BLOCKED if verdict.is_blocking else EXIT_OK
 
 
-def cmd_amend(args: argparse.Namespace, out: TextIO) -> int:
-    """Human-signed, scoped widening. Re-baselines only what is granted."""
+def cmd_request(args: argparse.Namespace, out: TextIO) -> int:
+    """Create an untrusted request; it cannot change the live contract."""
     root = _root(args)
-    contract = Contract.load(root)
-    amendment = contract.amend(args.reason, args.grant, signed_by=args.signed_by)
-    contract.save(root)
+    authority = Authority.open(root, required=True)
+    assert authority is not None
+    request_id = authority.create_request(args.reason, args.grant)
+    out.write(f"northstar: approval request created: {request_id}\n")
+    for grant in args.grant:
+        out.write(f"  requested: {grant}\n")
+    out.write("  contract unchanged\n")
+    out.write(f"  human action (separate terminal): northstar approve {request_id}\n")
+    return EXIT_OK
+
+
+def cmd_approve(args: argparse.Namespace, out: TextIO) -> int:
+    """Consume one request through an independent interactive human channel."""
+    root = _root(args)
+    authority = Authority.open(root, required=True)
+    assert authority is not None
+    amendment = authority.approve_request(args.request_id, interactive_confirmation)
     evidence.record_amendment(root, amendment.reason, amendment.grants, amendment.version)
-    out.write(f"northstar: contract amended to v{contract.version}, signed by {amendment.signed_by}\n")
+    out.write(
+        f"northstar: request {args.request_id} approved once; contract v{amendment.version}\n"
+    )
+    out.write(f"  authenticated signer: {amendment.signed_by}\n")
     for grant in amendment.grants:
         out.write(f"  granted: {grant}\n")
-    out.write("  every other invariant stays frozen against the original baseline\n")
+    out.write("  every other invariant remains frozen against the original baseline\n")
     return EXIT_OK
 
 
@@ -182,20 +263,40 @@ def cmd_receipt(args: argparse.Namespace, out: TextIO) -> int:
 
 def cmd_install(args: argparse.Namespace, out: TextIO) -> int:
     root = _root(args)
-    for path in install_mod.install(root, args.agent or None):
+    authority = Authority.open(root)
+    if authority is not None:
+        request = {"reason": "repair or change agent wiring", "grants": ["wiring:update"]}
+        passphrase = interactive_confirmation(request)
+        authority.validate_approval_passphrase(passphrase)
+        contract, oracle = authority.load(check_wiring=False)
+    written = install_mod.install(root, args.agent or None)
+    if authority is not None:
+        previous = [root / p for p in authority.metadata().get("wiring", [])]
+        authority.persist(
+            contract,
+            oracle,
+            wiring=[*previous, *written],
+            check_wiring=False,
+        )
+    for path in written:
         out.write(f"northstar: wired {path}\n")
     return EXIT_OK
 
 
 def cmd_hook(args: argparse.Namespace, out: TextIO) -> int:
     payload = adapters.read_payload(args.stdin or sys.stdin)
-    root = Path(payload.get("cwd") or (Path(args.root) if args.root else find_root()))
+    # Installed hooks bind an explicit checkout root. The payload cwd remains the
+    # action cwd for relative path resolution, but cannot change project identity.
+    root = Path(args.root).resolve() if args.root else Path(payload.get("cwd") or find_root())
     return adapters.handle(payload, root)
 
 
 def cmd_show(args: argparse.Namespace, out: TextIO) -> int:
     root = _root(args)
-    out.write(read_text(Path(root) / ".northstar" / "contract.yaml"))
+    contract, _ = _load(root)
+    import yaml
+
+    out.write(yaml.safe_dump(contract.to_dict(), sort_keys=False, allow_unicode=True))
     return EXIT_OK
 
 
@@ -205,7 +306,7 @@ def cmd_show(args: argparse.Namespace, out: TextIO) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="northstar",
-        description="Executable intent contracts for coding agents.",
+        description="Deterministic invariant enforcement for coding agents.",
     )
     parser.add_argument("--root", help="project root (default: nearest .northstar, else cwd)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -218,6 +319,14 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--no-install", action="store_true", help="skip agent wiring")
     init.set_defaults(func=cmd_init)
 
+    migrate = sub.add_parser("migrate", help="move an explicitly reviewed v0.1 bundle to R1")
+    migrate.add_argument(
+        "--accept-existing-state",
+        action="store_true",
+        help="confirm the local contract and oracle were reviewed",
+    )
+    migrate.set_defaults(func=cmd_migrate)
+
     comp = sub.add_parser("compile", help="translate a task description into constraints")
     comp.add_argument("text", nargs="?", help="the task description")
     comp.add_argument("--file", help="read the description from a file instead")
@@ -229,7 +338,8 @@ def build_parser() -> argparse.ArgumentParser:
     bn.add_argument("--output", help="also write the full report here")
     bn.set_defaults(func=cmd_bench)
 
-    fr = sub.add_parser("freeze", help="re-freeze the baseline from the current tree")
+    fr = sub.add_parser("freeze", help="human-confirmed full re-baseline")
+    fr.add_argument("--reason", required=True, help="why the entire baseline is changing")
     fr.set_defaults(func=cmd_freeze)
 
     check = sub.add_parser("check", help="verify the tree against the frozen baseline")
@@ -239,11 +349,19 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="restate the objective and the live verdict")
     status.set_defaults(func=cmd_status)
 
-    amend = sub.add_parser("amend", help="human-signed, scoped widening of the contract")
-    amend.add_argument("--grant", action="append", required=True, help="kind:identifier, repeatable")
-    amend.add_argument("--reason", required=True)
-    amend.add_argument("--signed-by", default="human", dest="signed_by")
-    amend.set_defaults(func=cmd_amend)
+    for name in ("request", "amend"):
+        amend = sub.add_parser(
+            name,
+            help="request a scoped widening without changing the contract"
+            + (" (deprecated alias)" if name == "amend" else ""),
+        )
+        amend.add_argument("--grant", action="append", required=True, help="kind:identifier, repeatable")
+        amend.add_argument("--reason", required=True)
+        amend.set_defaults(func=cmd_request)
+
+    approve = sub.add_parser("approve", help="approve one request from a separate interactive terminal")
+    approve.add_argument("request_id")
+    approve.set_defaults(func=cmd_approve)
 
     receipt = sub.add_parser("receipt", help="bind contract, baseline, diff and decisions")
     receipt.add_argument("--json", action="store_true")
@@ -266,6 +384,9 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args, out)
+    except IntegrityError as exc:
+        sys.stderr.write(f"northstar [DENY]\n[INTEGRITY_FAILURE] {exc}\n")
+        return EXIT_BLOCKED
     except (ContractError, FileNotFoundError) as exc:
         sys.stderr.write(f"northstar: {exc}\n")
         return EXIT_ERROR

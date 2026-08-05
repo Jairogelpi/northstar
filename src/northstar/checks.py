@@ -45,7 +45,9 @@ UNKNOWN_KIND = "unknown"
 #: the exact thing it was just refused.
 COMMAND = "command"
 GOVERNANCE = "governance"
-NOT_AMENDABLE = (COMMAND, GOVERNANCE)
+INTEGRITY = "integrity_failure"
+TOOL = "unclassified_tool"
+NOT_AMENDABLE = (COMMAND, GOVERNANCE, INTEGRITY)
 
 
 @dataclass

@@ -1,0 +1,36 @@
+name: Bug report
+description: Report incorrect runtime, CLI, packaging or documentation behaviour
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This is not a security vulnerability; vulnerabilities go to a private security advisory.
+          required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Northstar, agent host, OS and Python versions
+    validations:
+      required: true

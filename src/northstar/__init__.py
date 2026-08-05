@@ -1,4 +1,4 @@
-"""Northstar -- executable intent contracts for coding agents.
+"""Northstar -- deterministic invariant enforcement for coding agents.
 
 Coding agents remember your prompt. Northstar verifies that their actions still
 obey it.
@@ -9,7 +9,7 @@ from .contract import Contract, ContractError
 from .freeze import Oracle
 from .policy import Decision, Verdict, evaluate, gate
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Contract",

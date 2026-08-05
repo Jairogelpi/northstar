@@ -137,7 +137,7 @@ def _resolve(imported: str, known: set[str]) -> str | None:
 
 @dataclass
 class Oracle:
-    """Frozen witness of the repository at the moment the contract was signed."""
+    """Frozen witness of the repository at the moment the contract was approved."""
 
     created: str
     base_commit: str | None

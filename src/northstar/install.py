@@ -14,11 +14,13 @@ the exact dishonesty this project exists to avoid.
 from __future__ import annotations
 
 import json
+import os
+import re
+import shlex
+import subprocess
 from pathlib import Path
 
 from .util import read_text
-
-HOOK_COMMAND = "northstar hook"
 
 AGENTS_BEGIN = "<!-- northstar:begin -->"
 AGENTS_END = "<!-- northstar:end -->"
@@ -26,21 +28,22 @@ AGENTS_END = "<!-- northstar:end -->"
 AGENTS_BLOCK = f"""{AGENTS_BEGIN}
 ## Northstar intent contract (enforced)
 
-This project is governed by an executable intent contract at
-`.northstar/contract.yaml`, frozen against a baseline in `.northstar/oracle.json`.
+This project is governed by an executable intent contract. `.northstar/` contains
+readable mirrors; the runtime verifies a sealed authority outside the working tree.
 
 Rules, in order of precedence:
 
-1. Never write to `.northstar/`. It is the grader; editing it invalidates the run.
+1. Never write to `.northstar/` or Northstar's hook wiring. Tampering is a blocking
+   integrity failure; the working-tree files are not the runtime authority.
 2. Never edit a path listed in `constraints.protected_paths` -- tests included.
    Making a test pass by editing the test is the failure mode this exists to stop.
 3. Run `northstar check` after any group of edits. A non-zero exit means the
    working tree has diverged from the contract. Fix the divergence; do not
    suppress the check.
-4. You may not amend the contract. If a constraint genuinely blocks the
+4. You may request, but may not approve, a contract amendment. If a constraint genuinely blocks the
    objective, stop and tell the human the exact grant you need, in the form
-   `northstar amend --grant "<kind>:<identifier>" --reason "..."`.
-   Only a human signs. Requesting is allowed; self-signing is not.
+   `northstar request --grant "<kind>:<identifier>" --reason "..."`.
+   A human approves the request from a separate interactive terminal.
 5. `northstar status` restates the objective and the current verdict. Read it
    after any context compaction or handoff, rather than trusting your memory of
    the original request.
@@ -57,19 +60,33 @@ def _load_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _hook_entry() -> dict:
+def hook_command(root: Path) -> str:
+    """Shell command bound to one checkout, quoted for the current platform."""
+    argv = ["northstar", "--root", str(Path(root).resolve()), "hook"]
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
+def codex_notify(root: Path) -> str:
+    """TOML assignment for a root-bound Codex notification command."""
+    return "notify = " + json.dumps(
+        ["northstar", "--root", str(Path(root).resolve()), "hook"]
+    )
+
+
+def _hook_entry(root: Path) -> dict:
     return {
         "matcher": "*",
-        "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 30}],
+        "hooks": [{"type": "command", "command": hook_command(root), "timeout": 30}],
     }
 
 
-def _already_installed(groups: list) -> bool:
+def _already_installed(groups: list, root: Path) -> bool:
+    expected = hook_command(root)
     for group in groups:
         if not isinstance(group, dict):
             continue
         for hook in group.get("hooks", []) or []:
-            if isinstance(hook, dict) and hook.get("command") == HOOK_COMMAND:
+            if isinstance(hook, dict) and hook.get("command") == expected:
                 return True
     return False
 
@@ -87,8 +104,8 @@ def install_claude(root: Path) -> Path:
         if not isinstance(groups, list):
             groups = []
             hooks[event] = groups
-        if not _already_installed(groups):
-            groups.append(_hook_entry())
+        if not _already_installed(groups, root):
+            groups.append(_hook_entry(root))
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return settings_path
@@ -113,12 +130,16 @@ def install_codex(root: Path) -> list[Path]:
     """Codex reads AGENTS.md; the notify hook gives post-hoc journalling."""
     written = [install_agents_md(root, "AGENTS.md")]
     config = Path(root) / ".codex" / "config.toml"
-    body = 'notify = ["northstar", "hook"]\n'
-    if not config.exists() or "northstar" not in read_text(config):
-        config.parent.mkdir(parents=True, exist_ok=True)
-        previous = read_text(config) if config.exists() else ""
+    body = codex_notify(root)
+    config.parent.mkdir(parents=True, exist_ok=True)
+    previous = read_text(config) if config.exists() else ""
+    if re.search(r"(?m)^\s*notify\s*=.*$", previous):
+        updated = re.sub(r"(?m)^\s*notify\s*=.*$", body, previous)
+    else:
         separator = "\n" if previous and not previous.endswith("\n") else ""
-        config.write_text(previous + separator + body, encoding="utf-8")
+        updated = previous + separator + body + "\n"
+    if updated != previous:
+        config.write_text(updated, encoding="utf-8")
     written.append(config)
     return written
 
@@ -132,3 +153,48 @@ def install(root: Path, agents: list[str] | None = None) -> list[Path]:
     if "codex" in targets:
         written.extend(install_codex(root))
     return written
+
+
+def integrity_issues(root: Path, expected: list[str]) -> list[str]:
+    """Structural verification of the exact wiring created during ``init``.
+
+    User-owned settings may legitimately change, so hashing whole files would be
+    brittle.  The authority instead seals the list of integrations and verifies
+    that Northstar's hook/block is still present in each one.
+    """
+    root = Path(root)
+    issues: list[str] = []
+    for relative in expected:
+        path = root / relative
+        if not path.exists():
+            issues.append(f"{relative} is missing")
+            continue
+        normal = relative.replace("\\", "/")
+        if normal == ".claude/settings.json":
+            data = _load_json(path)
+            hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
+            for event in ("PreToolUse", "PostToolUse"):
+                groups = hooks.get(event, []) if isinstance(hooks, dict) else []
+                if not isinstance(groups, list) or not _already_installed(groups, root):
+                    issues.append(f"{relative} has no {event} Northstar hook")
+        elif normal in ("AGENTS.md", "CLAUDE.md"):
+            text = read_text(path)
+            if AGENTS_BEGIN not in text or AGENTS_END not in text:
+                issues.append(f"{relative} has no Northstar instruction block")
+        elif normal == ".codex/config.toml":
+            text = read_text(path)
+            if codex_notify(root) not in text:
+                issues.append(f"{relative} has no Northstar notify hook")
+    return issues
+
+
+def discover_wiring(root: Path) -> list[Path]:
+    """Existing valid v0.1 integrations that can be sealed during migration."""
+    root = Path(root)
+    candidates = [
+        ".claude/settings.json",
+        "CLAUDE.md",
+        "AGENTS.md",
+        ".codex/config.toml",
+    ]
+    return [root / relative for relative in candidates if not integrity_issues(root, [relative])]

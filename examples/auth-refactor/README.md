@@ -15,7 +15,7 @@ northstar init "refactor authentication without changing the public API"
 ```
 northstar: contract v1 for "refactor authentication without changing the public API"
   baseline frozen: 7 files, 2 public symbols, 1 runtime deps
-  wired: settings.json, CLAUDE.md, AGENTS.md, config.toml
+  wired: settings.json, CLAUDE.md, AGENTS.md, hooks.json
 ```
 
 ## 1. The agent tries to edit the tests
@@ -55,7 +55,11 @@ gate sees a green run.
 ## 3. The human signs one of them, and only one
 
 ```bash
-northstar amend --grant "public_api:src/auth/service.py::login" --reason "multi-tenant agreed"
+# Agent: creates an untrusted request; the contract does not change.
+northstar request --grant "public_api:src/auth/service.py::login" --reason "multi-tenant agreed"
+
+# Human, from a separate interactive terminal:
+northstar approve <request-id>
 northstar check
 ```
 
@@ -67,14 +71,14 @@ northstar check
 The signature re-baselined `login` and nothing else. One exception did not become a
 general amnesty.
 
-## 4. The agent tries to sign for itself
+## 4. The agent tries to approve its own request
 
 ```bash
-echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"northstar amend --grant dependency:httpx --reason needed"}}' | northstar hook
+echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"northstar approve deadbeef"}}' | northstar hook
 ```
 
 ```
-  [DENY] governance: amendments are signed by the human, not by the agent;
+  [DENY] governance: approvals are signed by the human, not by the agent;
          stop and state which grant you need
 
 This refusal is not amendable. Take another route.
@@ -83,7 +87,9 @@ This refusal is not amendable. Take another route.
 ## 5. The receipt
 
 ```bash
-northstar amend --grant "dependency:httpx" --reason "async client agreed"
+northstar request --grant "dependency:httpx" --reason "async client agreed"
+# Human, from a separate interactive terminal:
+northstar approve <request-id>
 northstar receipt
 ```
 

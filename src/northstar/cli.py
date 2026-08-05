@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import TextIO
 
-from . import adapters, bench, evidence, policy
+from . import adapters, bench, evidence, livebench, policy
 from . import install as install_mod
 from .authority import (
     Authority,
@@ -73,6 +73,49 @@ def cmd_bench(args: argparse.Namespace, out: TextIO) -> int:
     if args.output:
         bench.save(report, Path(args.output))
         out.write(f"\nwritten to {args.output}\n")
+    return EXIT_OK
+
+
+def cmd_live_bench_validate(args: argparse.Namespace, out: TextIO) -> int:
+    study = livebench.load(Path(args.study))
+    summary = {
+        "study_id": study.id,
+        "tasks": len(study.tasks),
+        "agents": len(study.agents),
+        "pairs": len(livebench.build_plan(study)) // 2,
+        "runs": len(livebench.build_plan(study)),
+    }
+    out.write(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    return EXIT_OK
+
+
+def cmd_live_bench_plan(args: argparse.Namespace, out: TextIO) -> int:
+    study = livebench.load(Path(args.study))
+    path = livebench.save_plan(study, Path(args.output))
+    out.write(f"northstar: live-agent plan written to {path}\n")
+    return EXIT_OK
+
+
+def cmd_live_bench_run(args: argparse.Namespace, out: TextIO) -> int:
+    study = livebench.load(Path(args.study))
+    path = livebench.run(study, Path(args.output), resume=args.resume)
+    out.write(f"northstar: live-agent artifacts written to {path}\n")
+    return EXIT_OK
+
+
+def cmd_live_bench_packet(args: argparse.Namespace, out: TextIO) -> int:
+    packets, mapping = livebench.make_packets(
+        Path(args.runs), Path(args.output), Path(args.map)
+    )
+    out.write(f"northstar: blinded packets written to {packets}\n")
+    out.write(f"northstar: private blinding map written to {mapping}\n")
+    return EXIT_OK
+
+
+def cmd_live_bench_analyze(args: argparse.Namespace, out: TextIO) -> int:
+    report = livebench.analyse(Path(args.runs), Path(args.annotations), Path(args.map))
+    livebench.save_report(report, Path(args.output))
+    out.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return EXIT_OK
 
 
@@ -351,6 +394,44 @@ def build_parser() -> argparse.ArgumentParser:
     bn.add_argument("--output", help="also write the full report here")
     bn.set_defaults(func=cmd_bench)
 
+    live = sub.add_parser(
+        "live-bench",
+        help="run paired, blinded evaluations with real Claude Code or Codex agents",
+    )
+    live_sub = live.add_subparsers(dest="live_command", required=True)
+
+    live_validate = live_sub.add_parser("validate", help="validate a study manifest")
+    live_validate.add_argument("study")
+    live_validate.set_defaults(func=cmd_live_bench_validate)
+
+    live_plan = live_sub.add_parser("plan", help="write the deterministic paired run plan")
+    live_plan.add_argument("study")
+    live_plan.add_argument("--output", required=True)
+    live_plan.set_defaults(func=cmd_live_bench_plan)
+
+    live_run = live_sub.add_parser("run", help="execute the study in isolated git clones")
+    live_run.add_argument("study")
+    live_run.add_argument("--output", required=True)
+    live_run.add_argument("--resume", action="store_true")
+    live_run.set_defaults(func=cmd_live_bench_run)
+
+    live_packet = live_sub.add_parser(
+        "packet", help="build outcome packets with the study arm blinded"
+    )
+    live_packet.add_argument("runs")
+    live_packet.add_argument("--output", required=True, help="packet directory")
+    live_packet.add_argument("--map", required=True, help="private evaluation-to-run map")
+    live_packet.set_defaults(func=cmd_live_bench_packet)
+
+    live_analyze = live_sub.add_parser(
+        "analyze", help="combine independent annotations and process evidence"
+    )
+    live_analyze.add_argument("runs")
+    live_analyze.add_argument("--annotations", required=True)
+    live_analyze.add_argument("--map", required=True)
+    live_analyze.add_argument("--output", required=True)
+    live_analyze.set_defaults(func=cmd_live_bench_analyze)
+
     fr = sub.add_parser("freeze", help="human-confirmed full re-baseline")
     fr.add_argument("--reason", required=True, help="why the entire baseline is changing")
     fr.set_defaults(func=cmd_freeze)
@@ -400,7 +481,7 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     except IntegrityError as exc:
         sys.stderr.write(f"northstar [DENY]\n[INTEGRITY_FAILURE] {exc}\n")
         return EXIT_BLOCKED
-    except (ContractError, FileNotFoundError) as exc:
+    except (ContractError, FileNotFoundError, livebench.StudyError) as exc:
         sys.stderr.write(f"northstar: {exc}\n")
         return EXIT_ERROR
 

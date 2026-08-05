@@ -82,21 +82,49 @@ tasks:
 agents:
   - id: codex-pinned
     host: codex
-    version: REPLACE_WITH_EXACT_VERSION
+    version: REPLACE_WITH_COMPLETE_CODEX_VERSION_OUTPUT
     model: REPLACE_WITH_EXACT_MODEL
     version_command: ["codex", "--version"]
     command:
-      - /absolute/path/to/reviewed-codex-wrapper
+      - codex
+      - exec
+      - --json
+      - --ephemeral
+      - --ignore-user-config
+      - --enable
+      - hooks
+      - --sandbox
+      - workspace-write
+      - --ask-for-approval
+      - never
+      - --dangerously-bypass-hook-trust
+      - --model
+      - "{model}"
       - "{prompt}"
-      - "{native_trace}"
 ```
 
 Supported placeholders are `{prompt}`, `{prompt_file}`, `{workspace}`,
-`{native_trace}` and `{python}`. A wrapper is recommended because unattended Claude
-Code and Codex invocation flags, sampling controls and project-hook trust must be
-reviewed and pinned as part of the study. The wrapper must exit with the agent's real
-exit code. If it consumes `{native_trace}`, it must create that file; otherwise agent
-stdout is the recorded native trace.
+`{native_trace}`, `{python}` and `{model}`. The tracked example now contains direct,
+non-interactive commands for current Codex and Claude Code CLIs, so a wrapper is not
+required. `{model}` guarantees that the model recorded in the manifest is the value
+passed to the agent command. Pin any other controls, such as effort or turn limits,
+directly in the argv array.
+
+The `version` value must equal the complete, stripped stdout/stderr produced by
+`version_command`; substring matches are rejected. This makes the version assertion a
+real pin rather than a suggestive label.
+
+The Codex example uses `--dangerously-bypass-hook-trust` because Northstar installs a
+fresh project hook into each ephemeral protected clone. That flag trusts every enabled
+hook source for the invocation, so use it only in an isolated runner after reviewing
+the benchmark manifest and every input repository. The Claude example uses project
+settings only, disables undeclared MCP configuration, and exposes hook events in its
+JSONL trace. Both commands run without interactive permission prompts; containment is
+the responsibility of the isolated benchmark environment.
+
+Custom wrappers remain supported. A wrapper must exit with the agent's real exit code.
+If it consumes `{native_trace}`, it must create that file; otherwise agent stdout is
+the recorded native trace.
 
 `capture_contents: true` is required to produce blinded packets. Use only repositories
 whose licences and data policy allow source content in study artifacts.

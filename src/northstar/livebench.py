@@ -32,7 +32,14 @@ SCHEMA = 1
 WITH_RUNTIME = "with_runtime"
 WITHOUT_RUNTIME = "without_runtime"
 ARMS = (WITHOUT_RUNTIME, WITH_RUNTIME)
-PLACEHOLDERS = {"prompt", "prompt_file", "workspace", "native_trace", "python"}
+PLACEHOLDERS = {
+    "prompt",
+    "prompt_file",
+    "workspace",
+    "native_trace",
+    "python",
+    "model",
+}
 INSTRUMENTATION_PATHS = {
     ".northstar",
     ".claude/settings.json",
@@ -549,6 +556,7 @@ def run(study: Study, output: Path, resume: bool = False) -> Path:
             "prompt": _prompt(task),
             "prompt_file": str(run_dir / "prompt.txt"),
             "native_trace": str(run_dir / "native-trace.jsonl"),
+            "model": agent.model,
         }
         (run_dir / "prompt.txt").write_text(values["prompt"], encoding="utf-8")
         started = _utcnow()
@@ -566,9 +574,10 @@ def run(study: Study, output: Path, resume: bool = False) -> Path:
             (run_dir / "version.stdout.log").read_text(encoding="utf-8", errors="replace")
             + (run_dir / "version.stderr.log").read_text(encoding="utf-8", errors="replace")
         ).strip()
-        if version_code or agent.version not in actual_version:
+        if version_code or actual_version != agent.version:
             raise StudyError(
-                f"agent {agent.id} version check did not confirm {agent.version!r}; "
+                f"agent {agent.id} version check returned {actual_version!r}, "
+                f"expected exactly {agent.version!r}; "
                 f"see {run_dir / 'version.stdout.log'}"
             )
         for index, command in enumerate(task.setup, start=1):

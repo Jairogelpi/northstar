@@ -148,6 +148,17 @@ def test_gate_extracts_paths_from_apply_patch(governed):
     assert policy.gate(contract, "apply_patch", params, project).decision is Decision.DENY
 
 
+def test_gate_extracts_codex_apply_patch_command(governed):
+    project, contract, _ = governed
+    params = {
+        "command": (
+            "*** Begin Patch\n*** Update File: .northstar/oracle.json\n"
+            "@@\n-{}\n+[]\n*** End Patch"
+        )
+    }
+    assert policy.gate(contract, "apply_patch", params, project).decision is Decision.DENY
+
+
 def test_path_traversal_and_symlinks_resolve_before_matching(governed):
     project, contract, _ = governed
     assert policy.gate(

@@ -79,6 +79,29 @@ def test_pre_hook_blocks_a_protected_write(governed):
     assert "do not edit .northstar/" in message
 
 
+def test_official_codex_hook_payload_blocks_before_apply_patch(governed):
+    project, _, _ = governed
+    code, message = run(
+        {
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "cwd": str(project),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "apply_patch",
+            "tool_use_id": "call-1",
+            "tool_input": {
+                "command": (
+                    "*** Begin Patch\n*** Update File: .northstar/oracle.json\n"
+                    "@@\n-{}\n+[]\n*** End Patch"
+                )
+            },
+        },
+        project,
+    )
+    assert code == EXIT_BLOCK
+    assert ".northstar/oracle.json" in message
+
+
 def test_block_message_restates_the_objective(governed):
     project, contract, _ = governed
     _, message = run(

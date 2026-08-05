@@ -24,7 +24,7 @@ baseline from a process that has never seen the agent's conversation.
 $ northstar init "refactor authentication"
 northstar: contract v1 for "refactor authentication"
   baseline frozen: 41 files, 118 public symbols, 6 runtime deps
-  wired: settings.json, CLAUDE.md, AGENTS.md, config.toml
+  wired: settings.json, CLAUDE.md, AGENTS.md, hooks.json
 
 # ...the agent works...
 
@@ -109,10 +109,15 @@ OS user performing the migration. No local fallback remains afterward.
 | Agent | Wiring | Enforcement |
 |---|---|---|
 | **Claude Code** | `.claude/settings.json` (PreToolUse + PostToolUse) | **Blocks** the write before it happens, plus trajectory checks after |
-| **Codex** | `AGENTS.md` + `.codex/config.toml` | Post-hoc detection + instructions; Codex exposes no blocking pre-tool hook |
+| **Codex** | `AGENTS.md` + `.codex/hooks.json` (PreToolUse + PostToolUse) | **Blocks** inspected writes before execution, plus trajectory checks after |
 
-Both are honest about what they are. Detection without prevention is still worth
-having, but it is not the same guarantee, and Northstar will not pretend otherwise.
+Codex requires the human to review and trust project hooks through `/hooks`; an
+untrusted hook is not active merely because the file exists. Both integrations retain
+post-state checks because no pre-tool parser is a complete enforcement boundary.
+
+After `northstar init` or `northstar install --agent codex`, open `/hooks` in Codex,
+inspect the root-bound Northstar command, and trust it. Northstar can verify the hook
+file and command but cannot inspect Codex's user-local trust decision.
 
 ---
 

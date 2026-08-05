@@ -30,6 +30,7 @@ HARD_PROTECTED = [
     ".northstar/**",
     ".claude/settings.json",
     ".codex/config.toml",
+    ".codex/hooks.json",
     "AGENTS.md",
     "CLAUDE.md",
 ]

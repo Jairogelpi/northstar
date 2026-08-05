@@ -187,7 +187,7 @@ def _paths_from(params: dict[str, Any]) -> list[str]:
         elif isinstance(value, str):
             if key in path_keys and value:
                 out.append(value)
-            if key in {"patch", "diff", "input"}:
+            if key in {"patch", "diff", "input", "command"}:
                 out.extend(
                     match.group(1).strip()
                     for match in re.finditer(
@@ -306,6 +306,7 @@ def _judge_command(contract: Contract, command: str, root: Path) -> list[Judgeme
         ".northstar",
         ".claude/settings.json",
         ".codex/config.toml",
+        ".codex/hooks.json",
         "agents.md",
         "claude.md",
     )

@@ -34,8 +34,9 @@ authority.
 
 The primary adversary is a capable coding agent pursuing a green result through any
 tool exposed by its host, including shell and custom MCP tools. The active Claude Code
-hook is expected to see each tool call. Codex currently provides post-hoc detection,
-not pre-action prevention.
+hook is expected to see each supported tool call. Claude Code and current Codex both
+provide pre-action blocking and post-action checks; Codex project hooks must first be
+reviewed and trusted by the human through `/hooks`.
 
 | Attack | R1 behaviour |
 |---|---|
@@ -61,8 +62,12 @@ not pre-action prevention.
   it is not the isolation boundary. Run the agent in a sandbox that cannot write the
   authority directory when malicious-agent resistance matters.
 - **Detached processes and unobserved tools.** If the agent host does not invoke the
-  hook, only the next explicit Northstar check can detect drift. Codex enforcement is
-  expressly post-hoc.
+  hook, only the next explicit Northstar check can detect drift. Codex documents that
+  some specialised tool paths may opt out of the default hook path.
+- **Codex trust is user-local.** Northstar verifies `.codex/hooks.json`, but Codex
+  skips non-managed hooks until the human trusts their exact definition through
+  `/hooks`. Disabling the hooks feature or withholding trust disables enforcement;
+  the project cannot inspect that user-local decision.
 - **Hook self-repair is not atomic rollback.** A post-hook can report deleted wiring,
   but the mutating command has already executed. Human repair is required.
 - **Languages without exact extractors.** Unsupported surfaces are `UNKNOWN`;

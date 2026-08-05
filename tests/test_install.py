@@ -85,45 +85,72 @@ def test_stale_block_is_replaced_not_duplicated(tmp_path: Path):
     assert text.startswith("before") and text.rstrip().endswith("after")
 
 
-def test_codex_gets_instructions_and_a_notify_hook(tmp_path: Path):
+def test_codex_gets_instructions_and_native_hooks(tmp_path: Path):
     written = inst.install_codex(tmp_path)
     assert (tmp_path / "AGENTS.md").exists()
-    config = read_text(tmp_path / ".codex" / "config.toml")
-    assert inst.codex_notify(tmp_path) in config
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks = json.loads(read_text(hooks_path))["hooks"]
+    for event in ("PreToolUse", "PostToolUse"):
+        assert hooks[event][0]["hooks"][0]["command"] == inst.hook_command(tmp_path)
     assert len(written) == 2
 
     inst.install_codex(tmp_path)  # idempotent
-    assert read_text(tmp_path / ".codex" / "config.toml").count("notify") == 1
+    hooks = json.loads(read_text(hooks_path))["hooks"]
+    assert len(hooks["PreToolUse"]) == 1
+    assert len(hooks["PostToolUse"]) == 1
 
 
-def test_codex_config_appends_to_existing(tmp_path: Path):
+def test_codex_hooks_preserve_existing_hooks(tmp_path: Path):
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}),
+        encoding="utf-8",
+    )
+    inst.install_codex(tmp_path)
+    hooks = json.loads(read_text(hooks_path))["hooks"]
+    assert hooks["SessionStart"][0]["hooks"][0]["command"] == "echo hi"
+    assert hooks["PreToolUse"] and hooks["PostToolUse"]
+
+
+def test_codex_removes_only_its_ignored_legacy_notify(tmp_path: Path):
     config = tmp_path / ".codex" / "config.toml"
     config.parent.mkdir(parents=True)
-    config.write_text('model = "gpt-5"', encoding="utf-8")
+    config.write_text(
+        'model = "gpt-5"\nnotify = ["northstar", "--root", "C:\\\\repo", "hook"]\n',
+        encoding="utf-8",
+    )
     inst.install_codex(tmp_path)
     text = read_text(config)
-    assert 'model = "gpt-5"' in text and "notify" in text
+    assert 'model = "gpt-5"' in text
+    assert "notify" not in text
 
 
-def test_codex_replaces_an_unbound_notify_hook(tmp_path: Path):
+def test_codex_repairs_wrong_shaped_hook_document(tmp_path: Path):
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(json.dumps({"hooks": "broken"}), encoding="utf-8")
+    inst.install_codex(tmp_path)
+    hooks = json.loads(read_text(hooks_path))["hooks"]
+    assert isinstance(hooks["PreToolUse"], list)
+    assert isinstance(hooks["PostToolUse"], list)
+
+
+def test_integrity_rejects_ignored_legacy_codex_wiring(tmp_path: Path):
     config = tmp_path / ".codex" / "config.toml"
     config.parent.mkdir(parents=True)
     config.write_text('notify = ["northstar", "hook"]\n', encoding="utf-8")
-    inst.install_codex(tmp_path)
-    text = read_text(config)
-    assert inst.codex_notify(tmp_path) in text
-    assert text.count("notify") == 1
 
+    issues = inst.integrity_issues(tmp_path, [".codex/config.toml"])
 
-def test_notify_replacement_preserves_windows_toml_escaping():
-    body = 'notify = ["northstar", "--root", "C:\\\\Users\\\\agent", "hook"]'
-    updated = inst._replace_notify('notify = ["northstar", "hook"]\n', body)
-    assert updated == body + "\n"
+    assert len(issues) == 1
+    assert "Codex ignores" in issues[0]
+    assert "northstar install --agent codex" in issues[0]
 
 
 def test_install_wires_both_agents_by_default(tmp_path: Path):
     written = {Path(p).name for p in inst.install(tmp_path)}
-    assert written == {"settings.json", "CLAUDE.md", "AGENTS.md", "config.toml"}
+    assert written == {"settings.json", "CLAUDE.md", "AGENTS.md", "hooks.json"}
 
 
 def test_install_can_target_one_agent(tmp_path: Path):

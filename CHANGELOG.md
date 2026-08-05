@@ -8,6 +8,8 @@
 - HMAC-sealed contract, oracle, journal, project metadata, and mirror digests.
 - Fail-closed hooks and CLI checks for missing, corrupt, or mismatched authority state.
 - Structural integrity checks for Claude Code and Codex wiring.
+- Native Codex `PreToolUse`/`PostToolUse` wiring via `.codex/hooks.json`; removes the
+  project-local `notify` integration that current Codex ignores.
 - One-time approval requests and Ed25519-signed interactive approval; the private key
   is passphrase-encrypted and `--signed-by` was removed.
 - Human-confirmed full re-baselines; agent-shell governance mutations are denied.

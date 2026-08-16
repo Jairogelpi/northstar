@@ -1,19 +1,22 @@
 ## What changed
 
-<!-- Describe the smallest coherent change. -->
+<!-- Lead with the user-visible outcome. -->
 
 ## Why
 
-<!-- State the failure mode, evidence gap, or user impact. -->
+<!-- Name the failure mode, evidence gap or usability problem. -->
 
-## Validation
+## Verification
 
-- [ ] `python -m pytest --cov=northstar --cov-report=term-missing`
 - [ ] `ruff check src tests`
-- [ ] Relevant IntentDriftBench trajectory or clean control added/updated
-- [ ] `python -m build --sdist --wheel` and `python -m twine check dist/*` when packaging changes
-- [ ] README, SECURITY and ROADMAP claims remain no stronger than the evidence
+- [ ] `python -m pytest --cov=northstar --cov-report=term-missing`
+- [ ] `northstar demo --json`
+- [ ] `northstar bench --json` (when enforcement or evidence changes)
+- [ ] Documentation and claim boundaries updated
 
-## Security boundary
+## Trust review
 
-<!-- If trusted state, hooks, tools, approval or replay changed, describe fail-closed and adversarial tests. -->
+- [ ] Unsupported input remains `UNKNOWN`, not `ALLOW`
+- [ ] No fallback from external authority to working-tree state
+- [ ] New governance mutations require an interactive human path
+- [ ] Benchmark outcomes are not derived from Northstar findings

@@ -1,458 +1,236 @@
 # Northstar
 
 [![CI](https://github.com/Jairogelpi/northstar/actions/workflows/ci.yml/badge.svg)](https://github.com/Jairogelpi/northstar/actions/workflows/ci.yml)
-[![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](https://github.com/Jairogelpi/northstar/blob/main/pyproject.toml)
-[![Scripted silent drift](https://img.shields.io/badge/scripted%20silent%20drift-0%25-brightgreen)](#intentdriftbench)
-[![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue)](https://github.com/Jairogelpi/northstar/blob/main/pyproject.toml)
+[![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen)](pyproject.toml)
+[![Scripted silent drift](https://img.shields.io/badge/scripted%20silent%20drift-0%25-brightgreen)](#evidence-with-claim-boundaries)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-**A deterministic invariant enforcement runtime for coding agents.**
+**The deterministic intent-fidelity layer for coding agents.**
 
-> Coding agents remember your prompt. Northstar verifies that their actions still obey it.
+> Compaction remembers. Northstar verifies.
 
-You ask for *"refactor authentication, don't change the public API."* Fifty steps
-later the API has changed, the tests were edited to agree, and every individual
-edit looked reasonable. That is not forgetfulness. It is **intent drift**: the
-constraints, priorities and meaning of the original request decaying across a long
-trajectory.
+You ask an agent to *“refactor authentication, but do not change the public API.”*
+Fifty steps later the API changed, the tests were edited to agree, and every local
+decision looked reasonable. Northstar freezes the non-negotiable parts of the request
+at step zero and checks the complete repository against that baseline after every
+action.
 
-Northstar freezes what must not change into a deterministic oracle **at t=0**, stores
-the trusted bundle outside the working tree, and checks every step against that
-baseline from a process that has never seen the agent's conversation.
+It is not another prompt file, an LLM judge, or a command deny-list. The judge is a
+deterministic process outside the agent conversation. It compares hashes, ASTs,
+dependencies, module edges and optional test outcomes against a sealed authority.
 
-```
-$ northstar init "refactor authentication"
-northstar: contract v1 for "refactor authentication"
-  baseline frozen: 41 files, 118 public symbols, 6 runtime deps
-  wired: settings.json, CLAUDE.md, AGENTS.md, hooks.json
+![Northstar demo: a protected edit and public API drift are denied before a scoped approval](docs/assets/demo.svg)
 
-# ...the agent works...
+## Try it in 60 seconds
 
-Edit tests/test_auth.py       -> DENY   protected file
-Edit pyproject.toml           -> DENY   runtime dependency added: httpx
-Edit auth/service.py          -> ALLOW
-  (signature of login changed) -> DENY   public_api: (user, password) -> (user, password, tenant)
-```
-
----
-
-## Why this is not another hook wrapper
-
-Three design decisions, each targeting a specific way existing guardrails fail.
-
-### 1. The judge does not share context with the agent
-
-An LLM-based semantic drift detector can ask, at step 50, whether step 50 looks
-off-course while sharing the agent's degraded context. That coupling makes its
-judgement vulnerable to the same compaction and reinterpretation as the run itself.
-
-Northstar spends its judgement **once, at t=0**, when the prompt is fresh and the
-human is present, and freezes the result into artifacts a dumb process can re-check
-forever: an API surface snapshot, a dependency set, a module graph, file hashes.
-At step 500 the check is `sha256` and an AST diff. No opinion required.
-
-### 2. State, not delta
-
-Other tools ask *"does this edit violate anything?"*. Drift does not live in any single
-edit — fifty innocent edits produce an unfaithful result with no blockable step among
-them.
-
-Every Northstar check compares the **whole tree against the baseline**, always. That
-makes violations monotone: no sequence of intermediate steps can launder one. An agent
-that breaks the API at step 12 and "restores" it differently at step 40 is caught at both.
-
-### 3. The working tree is not the authority
-
-`.northstar/` contains readable mirrors. The canonical contract, oracle, journal and
-project metadata live under the OS data directory and are HMAC-sealed. Amendments are
-signed with an Ed25519 key whose private half is encrypted by a human approval
-passphrase. Missing or
-corrupt authority, mirrors, or hook wiring is a blocking `INTEGRITY_FAILURE`; it never
-means “this project is ungoverned”.
-
-In the supported hooked workflow, an agent may create an untrusted approval request
-but cannot change the live contract through an ordinary tool action.
-A human consumes the request once from a separate interactive terminal, and the
-resulting amendment is authenticated and added to the chain.
-
-Making the test pass by editing the test is an architecture failure, not a behaviour
-problem. So it is fixed in the architecture.
-
----
-
-## Install
-
-Until the first `0.2.x` package is published, install the reviewed source from GitHub:
+Python 3.11+ is required. Until the first `0.2.x` PyPI release is published, install
+the reviewed source directly from GitHub:
 
 ```bash
-git clone https://github.com/Jairogelpi/northstar.git
-python -m pip install ./northstar
-cd /path/to/your-project
-northstar init "what this run is meant to achieve"
+pipx install "git+https://github.com/Jairogelpi/northstar.git"
+# or: uv tool install "git+https://github.com/Jairogelpi/northstar.git"
+
+northstar demo
 ```
 
-`pip install northstar-runtime` will become the preferred path after the release
-workflow has published and smoke-tested the package on PyPI.
+The demo creates a disposable project, blocks a protected test edit, catches a public
+signature change, exercises a scoped approval and deletes the project. It does not
+modify the current directory.
 
-`init` asks the human to create an approval passphrase, writes readable mirrors,
-freezes the baseline, creates the external authority, and wires both agents. No
-configuration file to hand-write. The passphrase is not stored; losing it means
-requests cannot be approved. Recovery requires stopping agents, backing up and
-removing the external authority manually, reviewing the readable mirrors, and running
-the explicit migration flow below with a new passphrase.
-
-Upgrading a v0.1 checkout is deliberately explicit because its local YAML was not a
-trusted authority. Review `.northstar/contract.yaml` and `.northstar/oracle.json`, then
-run from a human terminal:
+To govern a real repository, preview the exact contract before anything is written:
 
 ```bash
-northstar migrate --accept-existing-state
+cd /path/to/project
+northstar init "refactor authentication" --dry-run
+northstar init "refactor authentication"
+northstar doctor
 ```
 
-Existing amendments are re-authenticated by the new Ed25519 key and attributed to the
-OS user performing the migration. No local fallback remains afterward.
+`init` creates a human approval passphrase, freezes the baseline, stores the canonical
+authority outside the working tree, writes reviewable mirrors, and wires Claude Code
+and Codex. The objective is **not** silently interpreted as policy: the default profile
+is shown explicitly. For task-derived constraints, use a reviewed task file:
 
-| Agent | Wiring | Enforcement |
-|---|---|---|
-| **Claude Code** | `.claude/settings.json` (PreToolUse + PostToolUse) | **Blocks** the write before it happens, plus trajectory checks after |
-| **Codex** | `AGENTS.md` + `.codex/hooks.json` (PreToolUse + PostToolUse) | **Blocks** inspected writes before execution, plus trajectory checks after |
+```bash
+northstar init --from-task TASK.md --dry-run
+northstar init --from-task TASK.md
+```
 
-Codex requires the human to review and trust project hooks through `/hooks`; an
-untrusted hook is not active merely because the file exists. Both integrations retain
-post-state checks because no pre-tool parser is a complete enforcement boundary.
+If a sentence cannot be compiled deterministically, `init` stops and prints
+`NOT COMPILED`; after manual review, `--accept-uncompiled` records that conscious
+decision. See the [five-minute quickstart](docs/quickstart.md) for agent trust,
+approvals, diagnosis and clean uninstall.
 
-After `northstar init` or `northstar install --agent codex`, open `/hooks` in Codex,
-inspect the root-bound Northstar command, and trust it. Northstar can verify the hook
-file and command but cannot inspect Codex's user-local trust decision.
+## The core idea
 
----
+Northstar turns intent drift into a versioned state comparison:
 
-## The contract
+1. **Freeze at t=0.** Capture the public API, runtime dependencies, module graph,
+   protected files and optional behavioural witness while the request is fresh.
+2. **Check state, not edits.** Compare the whole tree with the original baseline.
+   A sequence of individually plausible edits cannot launder a violation.
+3. **Keep authority outside the tree.** Seal canonical state and mirror digests with
+   HMAC; authenticate human amendments with an encrypted Ed25519 key.
+4. **Widen only by grant.** The agent may request an exception, but only a human in a
+   separate interactive terminal can approve the named grant.
 
-A **deny-list, not a specification**. You declare what must not break — usually four
-lines, usually things you already know. The freezer derives the hundreds of assertions
-from the repository itself. Anything the contract does not name is free, so there is no
-waterfall and no penalty for a short contract.
+```mermaid
+flowchart TD
+    A["Human task"] --> B["Frozen contract + baseline"]
+    B --> C["Agent action"]
+    C --> D["Whole-tree deterministic check"]
+    D -->|on course| C
+    D -->|drift| E["Deny or require approval"]
+    E -->|scoped human grant| C
+```
+
+The working copy contains readable mirrors; the operating-system data directory holds
+the canonical bundle. Missing authority, mirror mismatch, corrupt signatures or broken
+hook wiring is an `INTEGRITY_FAILURE`, never a silent pass.
+
+## What makes it different
+
+| Approach | Survives context compaction | Checks cumulative tree state | Deterministic verdict | External sealed authority | Scoped signed exceptions |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Prompt / `AGENTS.md` instructions | No | No | No | No | No |
+| Context summaries and memory | Partly | No | No | No | No |
+| Command or tool-call firewall | Yes | No | Usually | No | Sometimes |
+| LLM reviewer / semantic judge | Partly | Sometimes | No | No | Sometimes |
+| **Northstar** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+
+This is a category comparison, not a claim that Northstar replaces every layer.
+Instructions tell an agent what to do; sandboxes limit capability; tests verify
+behaviour; Northstar preserves the task's declared invariants across the trajectory.
+The detailed product boundary is in [positioning](docs/positioning.md).
+
+## A small, reviewable contract
+
+The contract is a deny-list, not a full specification. Anything it does not name is
+free to change.
 
 ```yaml
 objective: refactor authentication
 
 constraints:
-  protected_paths:
-    - tests/**
-
+  protected_paths: ["tests/**"]
   public_api:
-    change: forbidden        # forbidden | approval_required | allowed
+    change: forbidden
     additions: allowed
     scope: ["**/*.py"]
-
   dependencies:
     additions: forbidden
-
   module_graph:
     new_edges: allowed
-
-  scope:
-    max_files: 0             # 0 = no budget
-    max_lines: 0
-
+  behavior:
+    change: allowed
   commands:
     forbidden: ["git push*", "rm -rf*"]
-
   tools:
-    unknown: approval_required  # unknown/MCP capabilities fail closed
-    read_only: []               # tool-name globs reviewed by a human
+    unknown: approval_required
+    read_only: []
     mutating: []
 ```
 
-### The behavioural oracle
+For behavioural compatibility, `northstar init --behavior` freezes the existing test
+outcomes as an executable witness. It records behaviour that exists—including current
+failures—not behaviour somebody hoped for.
 
-"Do not change the expected behaviour" is the constraint people actually care about,
-and no hash expresses it. The trick is not to judge it semantically at step 50 — it is
-to capture it as an **executable witness at step 0**, while the baseline is still the
-thing everyone agreed on.
+Verdicts are explicit: `ALLOW`, `WARN_DRIFT`, `UNKNOWN`, `REQUIRE_APPROVAL` and
+`DENY`. Unsupported or unparseable input becomes `UNKNOWN`; Northstar does not report
+coverage it cannot prove.
 
-```yaml
-  behavior:
-    change: forbidden
-```
-
-`northstar init --behavior` runs your test suite once at freeze time and records the
-outcome of every test. Later, the same suite re-runs and the outcomes are compared.
-The semantic question becomes a deterministic one:
-
-> `login()` used to return `True` for a valid user, and the test that says so used to
-> pass. It still has to.
-
-Two things make this honest. It captures the behaviour that **exists**, not the
-behaviour someone hoped for — a test failing at baseline is frozen as failing, and
-making it pass is reported as a change like any other, for the human to bless or not.
-The witness lives in the sealed external authority while the test files are protected.
-Tampering through a normal agent action is blocked or detected; the same-user shell
-limit is described precisely in [SECURITY.md](SECURITY.md).
-
-Off by default: it costs a full test run at freeze time, and a check that makes `init`
-slow is a check people turn off.
-
-### Verdicts
-
-| | |
-|---|---|
-| `ALLOW` | on course |
-| `WARN_DRIFT` | diverging, not yet blocking |
-| `UNKNOWN` | **not covered** — a file could not be parsed, and we say so |
-| `REQUIRE_APPROVAL` | needs a human approval |
-| `DENY` | blocked |
-
-`UNKNOWN` is a first-class outcome. Claiming coverage we do not have is the failure
-mode that makes a guardrail worse than none.
-
----
-
-## When you change your mind
-
-You will. Mid-task the human learns something, and the original constraint turns out
-to be wrong. That is the **central case, not the exception**.
-
-A red check is not a wall — it is the moment the system discovers the initial intent
-was incomplete and asks for the decision only a human can make:
-
-```
-NORTHSTAR: this action diverges from the intent contract.
-
-Objective (contract v1): "refactor authentication"
-
-  [DENY] public_api: signature changed: (user, password) -> (user, password, tenant)
-      grant needed: public_api:src/auth/service.py::login
-
-Either take another route, or create a request for the human:
-    northstar request --grant "public_api:src/auth/service.py::login" --reason "..."
-```
+## Everyday workflow
 
 ```bash
-# Safe for the agent: this does not change the contract.
-northstar request --grant "public_api:src/auth/service.py::login" --reason "multi-tenant agreed"
-
-# Human, in a separate interactive terminal:
-northstar approve <request-id>
+northstar status                 # objective + current verdict after any handoff
+northstar check                  # deterministic full-tree check
+northstar request --grant public_api:src/auth.py::login --reason "tenant agreed"
+# human in another interactive terminal:
+northstar approve REQUEST_ID
+northstar receipt                # contract, decisions and amendment chain
+northstar doctor --strict        # runtime, authority, mirrors, hooks and activity
+northstar uninstall --agent all  # authenticated removal; preserves foreign settings
 ```
 
-Three rules keep "the human can change their mind" from degrading into "the contract
-means nothing":
+Claude Code is wired through `PreToolUse` and `PostToolUse`. Codex uses project hooks
+plus `AGENTS.md`; a human must inspect and trust those hooks through `/hooks` before
+relying on them. Post-state checks remain the backstop because no tool parser is a
+complete security boundary.
 
-1. **Scoped widening.** Approval authorises only the named grant. Every other
-   invariant stays frozen against the original baseline. Otherwise each approval
-   would be a general amnesty — the classic failure where one exception is read as
-   permanent permission.
-2. **The human approves, the agent requests.** Approval requires the signing
-   passphrase from a separate interactive TTY; `--signed-by` and direct
-   non-interactive amendment do not exist.
-3. **The chain is authenticated.** `v1 -> v2 (approval id, signer, reason) -> v3`. At the end you
-   see not just what was built, but where the original intent turned out to be wrong
-   and who decided that.
+## Evidence, with claim boundaries
 
-**Drift is any divergence from the contract that was not approved.** That definition is
-what turns a fuzzy psychological problem into a version-control one.
+| Evidence | Status | What it supports | What it does **not** support |
+|---|---|---|---|
+| Unit, integration and adversarial tests | Reproduced in CI | Implementation and integrity behaviour | Live-agent effectiveness |
+| IntentDriftBench, 24 scripted paired trajectories | Reproduced in CI | 0% silent drift, 0% false blocks and 100% completion in this authored corpus | Independent or real-world rates |
+| LiveAgentBench harness | Implemented and preflightable | Reproducible paired runs, blinding, annotation and bootstrap analysis | A result before real runs are published |
+| Independent Claude Code/Codex study | **Pending** | Would support an external effectiveness estimate | Nothing is claimed yet |
+| External adopter outcomes | **Pending** | Would support usability and retention claims | Stars are not effectiveness evidence |
 
----
-
-## Commands
-
-```bash
-northstar init "<objective>"     # contract + baseline + agent wiring
-northstar init --from-task task.md --behavior   # compile constraints, freeze test outcomes too
-northstar migrate --accept-existing-state  # reviewed v0.1 bundle -> R1 authority
-northstar compile "<task text>"  # translate a description into constraints, with provenance
-northstar check                  # verify the tree against the baseline (exit 1 if blocking)
-northstar status                 # restate the objective and the live verdict
-northstar request --grant K:ID --reason "..." # untrusted request; contract unchanged
-northstar approve REQUEST_ID     # human-only, interactive, one-time approval
-northstar freeze --reason "..."  # human-confirmed full re-baseline
-northstar receipt                # bind contract, baseline, decisions, amendments
-northstar bench                  # run IntentDriftBench
-northstar live-bench --help      # paired, blinded real-agent study pipeline
-northstar show                   # print the contract
-```
-
-Run `northstar status` after any context compaction or handoff. It restates the
-objective from disk rather than from a memory that has been summarised twice.
-
----
-
-## The receipt
-
-```json
-{
-  "objective": "refactor authentication",
-  "contract_version": 2,
-  "base_commit": "a1b2c3...",
-  "final_verdict": { "decision": "ALLOW" },
-  "amendments": [
-    { "version": 2, "reason": "multi-tenant agreed", "grants": ["public_api:...::login"] }
-  ],
-  "uncovered_files": [],
-  "metrics": { "steps": 61, "decisions": { "DENY": 3 }, "wasted_steps": 0 }
-}
-```
-
-`wasted_steps` is the metric that matters over long runs. Blocking at step 50 saves
-correctness but burns 40 steps of work. The goal is not just to catch drift — it is to
-catch it at the step that caused it.
-
----
-
-## The intent compiler
-
-`northstar compile` turns a task description into constraints — and shows its
-workings, because a compiler trusted without review is just a slower way to guess.
-
-```bash
-northstar compile --file task.md
-```
-
-```yaml
-objective: Refactor authentication.
-
-constraints:
-  protected_paths:
-    - tests/**  # from: "Do not modify the existing tests."
-    - migrations/**  # from: "Ask before changing the database schema."
-
-  public_api:
-    change: forbidden  # from: "Do not change the public API."
-
-  dependencies:
-    additions: forbidden  # from: "Do not add runtime dependencies."
-
-# NOT COMPILED -- these are on you, not on the runtime:
-#   "Preserve Python 3.11 support."
-#       python version support is not a checkable invariant yet
-#   "Keep the architecture simple."
-#       subjective quality bars cannot be frozen deterministically
-```
-
-It is **rule-based, not model-based**. A model translating prose into YAML can
-mistranslate, and a wrong contract blocks for the wrong reason — which costs more
-trust than it buys, because the entire value of the deterministic layer is that its
-refusals are never arguable. So the compiler matches only phrasings it recognises,
-records the source sentence next to every constraint, and reports what it did not
-understand instead of guessing.
-
-The current evidence is a **15-example labelled regression corpus** (English and
-Spanish) in `tests/test_compiler.py`. It guards known phrasing from regressing; it is
-not a held-out accuracy estimate, and broader adversarial and third-party evaluation
-is still pending. `northstar init --from-task task.md` compiles and freezes in one go.
-
----
-
-## IntentDriftBench
-
-Twenty-four scripted trajectories — twenty-two adversarial and two clean controls — each
-replayed twice, with and without the runtime enforcing. Integrity attacks include
-shell deletion, `python -c`, `sed -i`, `mv`, heredocs, symlink/path traversal, nested
-working directories, an unknown MCP writer, hook deletion, direct contract API use,
-and self-rebaseline.
+Run the internal regression evidence yourself:
 
 ```bash
 northstar bench
 ```
 
 | Metric | Without runtime | With runtime |
-| --- | ---: | ---: |
-| Hard-constraint violation rate | 92% | 21% |
-| Silent drift rate | 92% | **0%** |
-| False block rate | 0% | 0% |
-| Human escalation rate | 0% | 4% |
-| Task completion rate | 100% | 100% |
-| Detection latency (steps) | 0.0 | 0.0 |
-| Runtime overhead (s/step) | typically <0.0001 | typically 0.002–0.004 |
+|---|---:|---:|
+| Hard-constraint violation rate | 91.7% | 20.8% |
+| Silent drift rate | 91.7% | **0.0%** |
+| False block rate | 0.0% | 0.0% |
+| Human escalation rate | 0.0% | 4.2% |
+| Task completion rate | 100.0% | 100.0% |
 
-<sub>Reproduced by CI on every commit (ubuntu-latest, Python 3.12). Overhead is
-roughly 10× higher on Windows — it is dominated by filesystem walks.</sub>
-
-Read the second row, then the first. **Silent drift is zero in this scripted corpus** —
-nothing reaches the final tree unannounced. But the violation rate is not zero: the
-pre-tool gate *prevents* inspected path writes, while a changed signature
-or an added dependency can only be *detected* after the edit lands. Detection plus a
-blocked exit code is what the agent gets; undoing the edit is the agent's move, or
-git's. Reporting 0% there would be a lie.
-
-The controls matter as much as the attacks: a runtime that blocked everything would
-score perfectly on violations. **0% false blocks and 100% task completion** are what
-say it is usable.
-
-**What the benchmark does not claim.** These trajectories are product-authored and
-scripted, not sampled from live agents or independently labelled. The numbers are
-regression evidence, not an external effectiveness estimate. Content-complete replay
-is opt-in with `NORTHSTAR_CAPTURE_REPLAY=1`; verdict-only legacy journals are rejected
-rather than converted into fake empty-file actions.
-
-### LiveAgentBench
-
-The executable live-agent harness now ships, but live-agent **results do not**. It
-creates randomised paired clones for Claude Code and Codex, verifies pinned agent
-versions, captures complete before/after trees and native traces, emits arm-blinded
-outcome packets, validates separate outcome/process annotations, and calculates
-paired bootstrap intervals both in aggregate and per task.
-
-Most importantly, a protected run is rejected from analysis if Northstar's sealed
-authority fails verification or the run recorded no actual hook activity. That stops a
-misconfigured “with Northstar” arm from becoming favourable but invalid evidence.
+These are product-authored scripted trajectories, not an external estimate. The
+publication rules, claim ladder and current ledger live in
+[EVIDENCE.md](EVIDENCE.md). The live study protocol includes exact version pins,
+commit-pinned clones, blinded outcome packets, independent labels and paired
+confidence intervals:
 
 ```bash
 northstar live-bench validate study.yml
-northstar live-bench run study.yml --output live-runs
-northstar live-bench packet live-runs --output packets --map private-map.json
-northstar live-bench analyze live-runs --annotations labels --map private-map.json --output report.json
+northstar live-bench preflight study.yml --check-repositories
+northstar live-bench plan study.yml --output preregistered-plan.json
+# run -> packet -> independently label -> analyze
+northstar live-bench report report.json --output report.md
 ```
 
-The pre-registered design, manifest, blinding boundary and annotation schema are in
-[LiveAgentBench](docs/live-agent-benchmark.md). Until independently labelled Claude
-Code and Codex runs are published, this is evaluation readiness—not effectiveness
-evidence.
+See [LiveAgentBench](docs/live-agent-benchmark.md). The report renderer refuses a
+report whose declared ground truth is not `independent_annotations`.
 
----
+## Honest limits
 
-## What this does not do
+- Northstar verifies declared, machine-checkable invariants; it does not prove
+  subjective intent such as “keep the architecture simple.”
+- Python surfaces use the AST. JavaScript, TypeScript, Go, Rust and Java extractors
+  are heuristic and say so; unsupported surfaces become `UNKNOWN`.
+- External state and seals are tamper-evident, not an OS sandbox. An unrestricted
+  same-user process can ultimately reach the authority key. Use real isolation when
+  defending against a malicious process; read [SECURITY.md](SECURITY.md).
+- API, dependency and graph changes are generally detected after the edit; protected
+  paths can be blocked before it. Git owns rollback.
+- No independently labelled live-agent numbers are claimed today.
 
-Stated plainly, because overclaiming here is the whole disease:
-
-- **No proof of semantic intent.** The behavioural oracle covers "does it still do
-  what it did", because that is expressible as frozen test outcomes. "Keep the
-  architecture simple" is not, and comes back as `UNKNOWN` rather than a guess.
-- **Pattern extractors outside Python.** Python surfaces are exact (AST). JavaScript,
-  TypeScript, Go, Rust and Java are matched with patterns, which genuinely misses
-  exotic declarations — so findings from them say `heuristic extractor` in the text,
-  and a language with no extractor at all becomes `UNKNOWN` rather than an empty
-  surface that can never be violated. Tree-sitter grammars are the upgrade path.
-- **Live-agent benchmark numbers.** See above.
-- **A same-user security boundary.** External state and HMAC seals make tampering
-  evident and fail closed. They cannot stop a process with unrestricted access as the
-  same OS user from eventually reaching the authority key. Use an OS sandbox or
-  separate service account when that is in scope; see [SECURITY.md](SECURITY.md).
-- **No rollback.** Northstar tells you where the trajectory left the contract. Undoing
-  it is git's job.
-
-## Development
+## Development and release status
 
 ```bash
-pip install -e ".[dev]"
-pytest --cov=northstar --cov-report=term-missing
+python -m pip install -e ".[dev]"
+ruff check src tests
+python -m pytest --cov=northstar --cov-report=term-missing
+northstar demo --json
+northstar bench --json
 ```
 
-Coverage is enforced at 95% in `pyproject.toml`. CI runs the suite on Ubuntu and
-Windows across Python 3.11–3.13, re-runs the scripted benchmark, builds wheel and
-sdist, validates metadata, and clean-installs the wheel on every change. Tag releases
-are configured to use PyPI trusted publishing and attach distributions, an SBOM, and
-build provenance. The first `0.2.x` publication remains pending the one-time PyPI
-Trusted Publisher and GitHub `pypi` environment setup described in
-[docs/releasing.md](docs/releasing.md).
+CI tests Python 3.11–3.13 on Linux and Windows plus Python 3.12 on macOS, enforces 95%
+branch coverage, reruns the scripted benchmark, and clean-installs the wheel. The
+tag-driven workflow is prepared for PyPI Trusted Publishing, SBOMs, GitHub release
+assets and build provenance. `0.2.0` remains unreleased until the one-time publisher
+configuration and release smoke test are complete; see [releasing](docs/releasing.md).
 
-The drift, policy, authority and benchmark tests exercise both ordinary invariant
-breaks and integrity attacks end-to-end through the same hook a real agent hits.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the one rule that governs new checks, and
-[ROADMAP.md](ROADMAP.md) for what is deliberately deferred and why.
+Contributions are welcome, especially independently authored benchmark tasks,
+compiler corpora and false-block reports. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) and [the roadmap](ROADMAP.md).
 
 ## License
 

@@ -12,8 +12,10 @@ import hashlib
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -987,6 +989,8 @@ def analyse(output: Path, annotations: Path, map_path: Path) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
         "study_id": plan["study_id"],
+        "study_sha256": plan["study_sha256"],
+        "seed": seed,
         "ground_truth": "independent_annotations",
         "product_findings_used_as_ground_truth": False,
         "protected_runs_require_observed_hooks": True,
@@ -998,6 +1002,216 @@ def analyse(output: Path, annotations: Path, map_path: Path) -> dict[str, Any]:
 def save_report(report: dict[str, Any], path: Path) -> Path:
     """Write a canonical JSON analysis report."""
     return _write_json(path, report)
+
+
+def preflight(study: Study, check_repositories: bool = False) -> dict[str, Any]:
+    """Verify the execution environment without starting an agent run."""
+    checks: list[dict[str, Any]] = []
+    git = shutil.which("git")
+    checks.append(
+        {
+            "kind": "executable",
+            "id": "git",
+            "status": "pass" if git else "fail",
+            "detail": git or "git is not on PATH",
+        }
+    )
+    placeholder_values = {
+        "prompt": "preflight",
+        "prompt_file": "preflight.txt",
+        "workspace": str(Path.cwd()),
+        "native_trace": "native-trace.jsonl",
+        "python": sys.executable,
+        "model": "preflight",
+    }
+    for agent in study.agents:
+        argv = _expand(agent.version_command, {**placeholder_values, "model": agent.model})
+        executable = shutil.which(argv[0])
+        if executable is None:
+            checks.append(
+                {
+                    "kind": "agent",
+                    "id": agent.id,
+                    "status": "fail",
+                    "detail": f"{argv[0]} is not on PATH",
+                }
+            )
+            continue
+        try:
+            completed = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=min(study.timeout_seconds, 30),
+            )
+            observed = (completed.stdout + completed.stderr).strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            checks.append(
+                {"kind": "agent", "id": agent.id, "status": "fail", "detail": str(exc)}
+            )
+            continue
+        matches = completed.returncode == 0 and observed == agent.version
+        checks.append(
+            {
+                "kind": "agent",
+                "id": agent.id,
+                "status": "pass" if matches else "fail",
+                "detail": f"version {observed!r} matches the manifest"
+                if matches
+                else f"expected exactly {agent.version!r}, observed {observed!r}",
+            }
+        )
+
+    if check_repositories and git:
+        for task in study.tasks:
+            with tempfile.TemporaryDirectory(prefix="northstar-preflight-") as temporary:
+                repository = Path(temporary) / "repository"
+                subprocess.run(
+                    [git, "init", "--quiet", str(repository)],
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                )
+                try:
+                    completed = subprocess.run(
+                        [
+                            git,
+                            "-C",
+                            str(repository),
+                            "fetch",
+                            "--quiet",
+                            "--depth=1",
+                            "--",
+                            task.repository_url,
+                            task.repository_commit,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=min(study.timeout_seconds, 120),
+                    )
+                    detail = (completed.stderr or completed.stdout).strip()
+                    ok = completed.returncode == 0
+                except (OSError, subprocess.SubprocessError) as exc:
+                    ok, detail = False, str(exc)
+                checks.append(
+                    {
+                        "kind": "repository",
+                        "id": task.id,
+                        "status": "pass" if ok else "fail",
+                        "detail": "declared commit is fetchable"
+                        if ok
+                        else detail or "declared commit could not be fetched",
+                    }
+                )
+
+    failed = sum(check["status"] == "fail" for check in checks)
+    return {
+        "schema": SCHEMA,
+        "study_id": study.id,
+        "study_sha256": _study_sha256(study),
+        "planned_runs": len(build_plan(study)),
+        "ready": failed == 0,
+        "failed_checks": failed,
+        "checks": checks,
+    }
+
+
+def _format_metric(name: str, value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    if name.endswith("_rate"):
+        return f"{value:.1%}"
+    if name.endswith("_seconds"):
+        return f"{value:.3f}s"
+    return f"{value:.2f}"
+
+
+def _render_report(report: dict[str, Any]) -> str:
+    metrics = [
+        "hard_constraint_violation_rate",
+        "silent_drift_rate",
+        "false_block_rate",
+        "human_escalation_rate",
+        "task_completion_rate",
+        "detection_latency_steps",
+        "total_duration_seconds",
+    ]
+    labels = {
+        "hard_constraint_violation_rate": "Hard-constraint violation rate",
+        "silent_drift_rate": "Silent drift rate",
+        "false_block_rate": "False-block rate",
+        "human_escalation_rate": "Human escalation rate",
+        "task_completion_rate": "Task completion rate",
+        "detection_latency_steps": "Detection latency (steps)",
+        "total_duration_seconds": "Total duration",
+    }
+    lines = [
+        f"# LiveAgentBench: {report['study_id']}",
+        "",
+        "> Ground truth comes from arm-blinded independent annotations. Northstar findings were not used as outcome labels.",
+        "",
+        f"**Runs:** {report['runs']}  ",
+        f"**Paired comparisons:** {report['pairs']}",
+        "",
+        "| Metric | Without Northstar | With Northstar | Paired difference (with − without) | 95% CI |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for name in metrics:
+        without = report["arms"][WITHOUT_RUNTIME][name]["mean"]
+        with_runtime = report["arms"][WITH_RUNTIME][name]["mean"]
+        paired = report["paired_differences"][name]
+        difference = paired["difference_with_minus_without"]
+        interval = paired["confidence_interval_95"]
+        interval_text = (
+            f"[{_format_metric(name, interval[0])}, {_format_metric(name, interval[1])}]"
+            if interval is not None
+            else "n/a"
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    labels[name],
+                    _format_metric(name, without),
+                    _format_metric(name, with_runtime),
+                    _format_metric(name, difference),
+                    interval_text,
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Interpretation boundary",
+            "",
+            "- These estimates apply to the declared tasks, agents, models, versions and repetitions only.",
+            "- A confidence interval crossing zero does not establish a reliable directional effect.",
+            "- A protected run counted only when authority integrity and real hook activity were observed.",
+            "- Raw runs, blinded packets, annotations, the private map and this analysis must be published together for independent audit.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_report(report: dict[str, Any]) -> str:
+    """Render the canonical analysis without adding claims not present in it."""
+    if report.get("ground_truth") != "independent_annotations":
+        raise StudyError("report does not declare independent annotations as ground truth")
+    try:
+        return _render_report(report)
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise StudyError(f"analysis report is incomplete or malformed: {exc}") from exc
+
+
+def save_markdown_report(report: dict[str, Any], path: Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_report(report), encoding="utf-8")
+    return path
 
 
 def _read_json(path: Path) -> dict[str, Any]:

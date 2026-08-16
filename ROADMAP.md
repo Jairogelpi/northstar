@@ -15,6 +15,9 @@ Ordered by the evidence missing from the product's central claim, not by feature
 - Opt-in content-complete replay; verdict-only journals are explicitly not replayable.
 - Wheel/sdist smoke CI and a prepared tag-driven workflow for PyPI, SBOM, provenance
   and release assets; first publication still requires the documented one-time setup.
+- Disposable product demo, contract preview, read-only diagnostics and authenticated
+  uninstall with preservation of unrelated agent settings.
+- Live study preflight and publication-safe independent-evidence report renderer.
 
 ## Evidence still required
 
@@ -37,6 +40,11 @@ No live numbers are fabricated in this repository. IntentDriftBench remains inte
 regression evidence until the external study is published. See
 [LiveAgentBench](docs/live-agent-benchmark.md).
 
+The runner environment must contain the pinned Claude Code/Codex executables and their
+required credentials. Outcome annotators must be independent of Northstar findings;
+these are operational dependencies, not implementation work that can be replaced by
+synthetic labels.
+
 ### Independent compiler evaluation
 
 The 15 labelled descriptions in `tests/test_compiler.py` are a regression corpus, not
@@ -50,6 +58,14 @@ matrix before making an accuracy claim.
 Pilot R1 on repositories not authored for Northstar. Track installation success,
 false blocks, approval quality, bypasses, runtime overhead and abandonment. Issues,
 stars and forks are not effectiveness evidence; reproducible external runs are.
+
+### Distribution and onboarding follow-through
+
+- Configure the one-time PyPI Trusted Publisher and protected GitHub `pypi`
+  environment, publish `0.2.0`, and run the documented public-index smoke test.
+- Record first-install completion and `doctor` warnings from opt-in pilots.
+- Add exact parsers or integration support only when external usage identifies the
+  highest-value language or agent host.
 
 ## Security upgrades
 

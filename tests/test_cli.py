@@ -41,6 +41,8 @@ def test_init_creates_contract_baseline_and_wiring(project: Path):
     assert "refactor authentication" in text
     assert "baseline frozen" in text
     assert "public symbols" in text
+    assert "conservative default profile" in text
+    assert "invariant: public API changes: forbidden" in text
 
 
 def test_init_can_skip_wiring(project: Path):
@@ -203,6 +205,17 @@ def test_live_bench_cli_dispatches_the_reproducible_pipeline(tmp_path: Path, mon
     report = {"study_id": "study", "runs": 2}
     monkeypatch.setattr(cli.livebench, "analyse", lambda runs, annotations, mapping: report)
     monkeypatch.setattr(cli.livebench, "save_report", lambda value, path: path)
+    monkeypatch.setattr(
+        cli.livebench,
+        "preflight",
+        lambda value, check_repositories=False: {
+            "study_id": "study",
+            "ready": True,
+            "check_repositories": check_repositories,
+        },
+    )
+    monkeypatch.setattr(cli.livebench, "_read_json", lambda path: report)
+    monkeypatch.setattr(cli.livebench, "save_markdown_report", lambda value, path: path)
 
     code, text = run(["live-bench", "validate", "study.yml"])
     assert code == cli.EXIT_OK and json.loads(text)["pairs"] == 1
@@ -210,6 +223,8 @@ def test_live_bench_cli_dispatches_the_reproducible_pipeline(tmp_path: Path, mon
         ["live-bench", "plan", "study.yml", "--output", str(tmp_path / "plan.json")]
     )
     assert code == cli.EXIT_OK and "plan written" in text
+    code, text = run(["live-bench", "preflight", "study.yml", "--check-repositories"])
+    assert code == cli.EXIT_OK and json.loads(text)["check_repositories"] is True
     code, text = run(
         [
             "live-bench",
@@ -247,6 +262,16 @@ def test_live_bench_cli_dispatches_the_reproducible_pipeline(tmp_path: Path, mon
         ]
     )
     assert code == cli.EXIT_OK and json.loads(text) == report
+    code, text = run(
+        [
+            "live-bench",
+            "report",
+            str(tmp_path / "report.json"),
+            "--output",
+            str(tmp_path / "report.md"),
+        ]
+    )
+    assert code == cli.EXIT_OK and "evidence report written" in text
 
 
 def test_live_bench_cli_reports_study_errors(monkeypatch, capsys):
@@ -265,6 +290,52 @@ def test_live_bench_cli_reports_study_errors(monkeypatch, capsys):
 def test_install_command(project: Path):
     code, text = run(["--root", str(project), "install", "--agent", "codex"])
     assert code == cli.EXIT_OK and "wired" in text
+
+
+def test_doctor_and_demo_commands(project: Path):
+    code, text = run(["--root", str(project), "doctor"])
+    assert code == cli.EXIT_OK and "DEGRADED" in text
+    code, text = run(["--root", str(project), "doctor", "--strict"])
+    assert code == cli.EXIT_BLOCKED and "project is not governed" in text
+
+    code, text = run(["demo", "--json"])
+    assert code == cli.EXIT_OK
+    assert json.loads(text)["final_decision"] == "ALLOW"
+
+
+def test_version_is_available_without_a_subcommand():
+    with pytest.raises(SystemExit) as stopped:
+        cli.build_parser().parse_args(["--version"])
+    assert stopped.value.code == cli.EXIT_OK
+
+
+def test_uninstall_governed_adapter_requires_human_and_refreshes_clean_baseline(
+    initialised: Path, monkeypatch
+):
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+
+    code, text = run(["--root", str(initialised), "uninstall", "--agent", "codex"])
+
+    assert code == cli.EXIT_OK
+    assert "baseline refreshed" in text
+    authority = Authority.open(initialised, required=True)
+    assert authority is not None
+    authority.load()
+    assert ".codex/hooks.json" not in authority.metadata()["wiring"]
+    assert "AGENTS.md" not in authority.metadata()["wiring"]
+    assert run(["--root", str(initialised), "check"])[0] == cli.EXIT_OK
+
+
+def test_uninstall_all_alias_removes_both_adapters(initialised: Path, monkeypatch):
+    monkeypatch.setattr(cli, "interactive_confirmation", lambda request: APPROVAL_SECRET)
+
+    code, text = run(["--root", str(initialised), "uninstall", "--agent", "all"])
+
+    assert code == cli.EXIT_OK
+    assert "unrelated agent settings were preserved" in text
+    authority = Authority.open(initialised, required=True)
+    assert authority is not None
+    assert authority.metadata()["wiring"] == []
 
 
 def test_governed_wiring_repair_requires_the_approval_secret(initialised: Path, monkeypatch):
@@ -405,10 +476,43 @@ def test_compile_of_a_fully_understood_task_says_nothing_extra():
 def test_init_from_a_task_file(project: Path, tmp_path: Path):
     task = tmp_path / "task.md"
     task.write_text(TASK, encoding="utf-8")
-    code, text = run(["--root", str(project), "init", "--from-task", str(task), "--no-install"])
+    code, text = run(
+        [
+            "--root",
+            str(project),
+            "init",
+            "--from-task",
+            str(task),
+            "--accept-uncompiled",
+            "--no-install",
+        ]
+    )
     assert code == cli.EXIT_OK
     assert "NOT COMPILED" in text  # the python 3.11 line, admitted
     assert Contract.load(project).constraints["dependencies"]["additions"] == "forbidden"
+
+
+def test_init_refuses_uncompiled_constraints_until_the_human_accepts_them(
+    project: Path, tmp_path: Path, capsys
+):
+    task = tmp_path / "task.md"
+    task.write_text(TASK, encoding="utf-8")
+
+    code, text = run(["--root", str(project), "init", "--from-task", str(task)])
+
+    assert code == cli.EXIT_ERROR
+    assert "NOT COMPILED" in text
+    assert "--accept-uncompiled" in capsys.readouterr().err
+    assert not (project / ".northstar").exists()
+
+
+def test_init_dry_run_previews_without_writing(project: Path):
+    code, text = run(["--root", str(project), "init", "x", "--dry-run"])
+
+    assert code == cli.EXIT_OK
+    assert "dry run" in text
+    assert not (project / ".northstar").exists()
+    assert not (project / ".claude").exists()
 
 
 def test_init_with_behaviour_freezes_the_suite(project: Path):

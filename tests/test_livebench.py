@@ -321,6 +321,104 @@ def test_tracked_example_uses_direct_agent_commands_and_the_declared_model():
     assert all("{model}" in command for command in commands.values())
 
 
+def test_preflight_verifies_pinned_agent_and_repository(task_repo, tmp_path: Path):
+    repository, commit = task_repo
+    study = livebench.load(write_manifest(tmp_path, manifest_data(repository, commit)))
+
+    report = livebench.preflight(study, check_repositories=True)
+
+    assert report["ready"] is True
+    assert report["planned_runs"] == 2
+    assert {check["kind"] for check in report["checks"]} == {
+        "executable",
+        "agent",
+        "repository",
+    }
+
+
+def test_preflight_rejects_a_version_mismatch(task_repo, tmp_path: Path):
+    repository, commit = task_repo
+    data = manifest_data(repository, commit)
+    data["agents"][0]["version"] = "different"
+    study = livebench.load(write_manifest(tmp_path, data))
+
+    report = livebench.preflight(study)
+
+    assert report["ready"] is False
+    assert report["failed_checks"] == 1
+    assert "expected exactly" in report["checks"][-1]["detail"]
+
+
+def test_preflight_reports_a_missing_agent_executable(task_repo, tmp_path: Path):
+    repository, commit = task_repo
+    data = manifest_data(repository, commit)
+    data["agents"][0]["version_command"] = ["northstar-agent-that-does-not-exist"]
+    study = livebench.load(write_manifest(tmp_path, data))
+
+    report = livebench.preflight(study)
+
+    assert report["ready"] is False
+    assert report["checks"][-1]["status"] == "fail"
+    assert "not on PATH" in report["checks"][-1]["detail"]
+
+
+def test_markdown_report_preserves_claim_boundaries(tmp_path: Path):
+    metrics = [
+        "hard_constraint_violation_rate",
+        "silent_drift_rate",
+        "false_block_rate",
+        "human_escalation_rate",
+        "task_completion_rate",
+        "detection_latency_steps",
+        "total_duration_seconds",
+    ]
+    report = {
+        "schema": 1,
+        "study_id": "external-001",
+        "ground_truth": "independent_annotations",
+        "product_findings_used_as_ground_truth": False,
+        "runs": 40,
+        "pairs": 20,
+        "arms": {
+            arm: {name: {"mean": 0.25 if arm == "without_runtime" else 0.1, "observations": 20} for name in metrics}
+            for arm in ("without_runtime", "with_runtime")
+        },
+        "paired_differences": {
+            name: {
+                "difference_with_minus_without": -0.15,
+                "confidence_interval_95": [-0.3, -0.01],
+                "pairs": 20,
+            }
+            for name in metrics
+        },
+    }
+    report["arms"]["without_runtime"]["detection_latency_steps"]["mean"] = None
+    report["arms"]["with_runtime"]["detection_latency_steps"]["mean"] = None
+    report["paired_differences"]["detection_latency_steps"].update(
+        difference_with_minus_without=None,
+        confidence_interval_95=None,
+    )
+
+    text = livebench.render_report(report)
+    target = livebench.save_markdown_report(report, tmp_path / "report.md")
+
+    assert "arm-blinded independent annotations" in text
+    assert "95% CI" in text
+    assert "20" in text
+    assert "n/a" in text
+    assert target.read_text(encoding="utf-8") == text
+
+
+def test_markdown_report_refuses_product_findings_as_ground_truth():
+    with pytest.raises(livebench.StudyError, match="independent annotations"):
+        livebench.render_report({"ground_truth": "northstar_findings"})
+
+
+def test_markdown_report_rejects_incomplete_independent_analysis():
+    with pytest.raises(livebench.StudyError, match="incomplete or malformed"):
+        livebench.render_report({"ground_truth": "independent_annotations"})
+
+
 def test_annotation_latency_matches_the_same_constraint():
     annotation = {
         "schema": 1,

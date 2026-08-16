@@ -1,36 +1,42 @@
 name: Bug report
-description: Report incorrect runtime, CLI, packaging or documentation behaviour
-title: "[bug] "
-labels: ["bug"]
+description: Report reproducible behaviour that differs from the documentation.
+title: "bug: "
+labels: ["bug", "needs-triage"]
 body:
-  - type: checkboxes
-    id: security
+  - type: markdown
     attributes:
-      label: Security check
-      options:
-        - label: This is not a security vulnerability; vulnerabilities go to a private security advisory.
-          required: true
+      value: Thanks for making Northstar more trustworthy. Remove secrets and private source before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Northstar version
+      description: Paste `northstar --version` or the exact commit.
+      placeholder: northstar-runtime 0.2.0 / commit SHA
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and agent
+      placeholder: macOS 15, Python 3.12, Codex CLI ...
+    validations:
+      required: true
   - type: textarea
-    id: observed
+    id: reproduction
     attributes:
-      label: Observed behaviour
+      label: Minimal reproduction
+      description: Include the smallest repository shape, contract and command sequence that reproduces the issue.
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected behaviour
+      label: Expected and observed result
     validations:
       required: true
   - type: textarea
-    id: reproduce
+    id: doctor
     attributes:
-      label: Minimal reproduction
-    validations:
-      required: true
-  - type: input
-    id: version
-    attributes:
-      label: Northstar, agent host, OS and Python versions
-    validations:
-      required: true
+      label: Doctor output
+      description: Paste `northstar doctor --json` after removing sensitive paths.
+      render: json

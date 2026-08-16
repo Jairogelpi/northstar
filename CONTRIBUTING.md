@@ -6,6 +6,8 @@ cd northstar
 pip install -e ".[dev]"
 python -m pytest --cov=northstar --cov-report=term-missing
 ruff check src tests
+northstar demo --json
+northstar bench --json
 ```
 
 Coverage is gated at 95% when the coverage plugin is enabled, as it is in CI and in
@@ -70,6 +72,18 @@ it blocks work nobody asked to block.
 The most valuable bug report this project can get. Include the contract, the action
 that was refused, and why it should have been allowed. False blocks are tracked as a
 benchmark metric precisely so they cannot be dismissed as user error.
+
+## Evidence contributions
+
+Read [EVIDENCE.md](EVIDENCE.md) before adding benchmark language or numbers. Product
+findings are never outcome ground truth. A LiveAgentBench contribution must preserve
+the declared repository commits and agent versions, keep arm identity hidden from
+outcome evaluators, and publish failures alongside successes.
+
+Especially valuable contributions are independently authored task manifests,
+constraint rubrics, bilingual compiler examples, external-repository pilots and
+reproducible false-block cases. Do not submit credentials, private source snapshots or
+licensed content that cannot be redistributed.
 
 Release maintainers should follow [docs/releasing.md](docs/releasing.md); local
 artifact uploads and long-lived PyPI tokens are intentionally outside the process.

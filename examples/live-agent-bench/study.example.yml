@@ -33,6 +33,9 @@ tasks:
     test: ["{python}", "-m", "pytest", "-q"]
 
 agents:
+  # Run `northstar live-bench preflight study.yml --check-repositories`
+  # before planning or spending agent tokens. It checks these exact version
+  # strings and proves every declared commit is fetchable.
   - id: codex-pinned
     host: codex
     # Must equal the complete, stripped output of `codex --version`.

@@ -31,6 +31,22 @@
 - Wheel/sdist build and clean-install smoke tests in CI.
 - Tag-driven PyPI trusted publishing, GitHub release assets, SBOM, and build provenance workflow.
 
+### Onboarding and evidence
+
+- Disposable `northstar demo` exercises freeze, enforcement, drift detection and a
+  scoped approval without modifying user files.
+- Read-only `northstar doctor` verifies the runtime, sealed authority, mirrors, agent
+  wiring, current verdict, observed hook activity and agent executables.
+- `northstar init --dry-run` previews the exact contract. Task-derived initialization
+  now stops on uncompiled sentences unless the human explicitly accepts them.
+- Authenticated `northstar uninstall` removes only managed Claude/Codex wiring and
+  preserves unrelated settings and instruction text.
+- LiveAgentBench preflight checks exact agent versions and repository commits before
+  token-consuming runs; the Markdown report gate accepts only independent annotation
+  ground truth.
+- Added a five-minute quickstart, explicit product positioning, a public evidence
+  ladder and claim publication policy.
+
 ## 0.1.0 - 2026-08-04
 
 - Initial deterministic contract, oracle, checks, adapters, compiler, receipt, and scripted benchmark.

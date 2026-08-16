@@ -1,31 +1,41 @@
 name: False block
-description: Report a legitimate action that Northstar refused
-title: "[false block] "
+description: Report an action Northstar refused but the reviewed contract should allow.
+title: "false block: "
+labels: ["false-block", "needs-triage"]
 body:
   - type: markdown
     attributes:
-      value: Do not include secrets or proprietary source. Security bypasses belong in a private advisory.
-  - type: textarea
-    id: objective
+      value: False blocks are first-class evidence failures. Please provide the smallest safe reproduction.
+  - type: input
+    id: version
     attributes:
-      label: Objective and relevant contract sections
+      label: Northstar version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Minimal contract
+      render: yaml
     validations:
       required: true
   - type: textarea
     id: action
     attributes:
-      label: Refused tool action and exact verdict
+      label: Action that was blocked
+      description: Include the tool name and relevant payload with secrets removed.
     validations:
       required: true
   - type: textarea
-    id: expected
+    id: verdict
     attributes:
-      label: Why the action should have been allowed
+      label: Exact verdict
+      render: text
     validations:
       required: true
-  - type: input
-    id: version
+  - type: textarea
+    id: rationale
     attributes:
-      label: Northstar, agent host, OS and Python versions
+      label: Why the contract should allow it
     validations:
       required: true

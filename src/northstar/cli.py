@@ -13,7 +13,16 @@ import tempfile
 from pathlib import Path
 from typing import TextIO
 
-from . import adapters, bench, evidence, livebench, policy
+from . import (
+    __version__,
+    adapters,
+    bench,
+    demo,
+    diagnostics,
+    evidence,
+    livebench,
+    policy,
+)
 from . import install as install_mod
 from .authority import (
     Authority,
@@ -96,6 +105,13 @@ def cmd_live_bench_plan(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def cmd_live_bench_preflight(args: argparse.Namespace, out: TextIO) -> int:
+    study = livebench.load(Path(args.study))
+    report = livebench.preflight(study, check_repositories=args.check_repositories)
+    out.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return EXIT_OK if report["ready"] else EXIT_ERROR
+
+
 def cmd_live_bench_run(args: argparse.Namespace, out: TextIO) -> int:
     study = livebench.load(Path(args.study))
     path = livebench.run(study, Path(args.output), resume=args.resume)
@@ -119,13 +135,27 @@ def cmd_live_bench_analyze(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def cmd_live_bench_report(args: argparse.Namespace, out: TextIO) -> int:
+    report = livebench._read_json(Path(args.report))
+    path = livebench.save_markdown_report(report, Path(args.output))
+    out.write(f"northstar: evidence report written to {path}\n")
+    return EXIT_OK
+
+
+def _contract_summary(contract: Contract) -> list[str]:
+    constraints = contract.constraints
+    return [
+        f"public API changes: {constraints['public_api']['change']}",
+        f"runtime dependency additions: {constraints['dependencies']['additions']}",
+        f"behaviour changes: {constraints['behavior']['change']}",
+        f"unknown tools: {constraints['tools']['unknown']}",
+        f"protected paths: {', '.join(constraints['protected_paths']) or 'none declared'}",
+    ]
+
+
 def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
     root = Path(args.root).resolve() if args.root else Path.cwd()
-    target_authority = Authority.for_root(root)
-    if target_authority.path.exists():
-        raise IntegrityError(
-            f"authority already exists at {target_authority.path}; use an approved re-baseline instead"
-        )
+    compiled = None
     if args.from_task:
         compiled = compile_intent(read_text(Path(args.from_task)))
         contract = compiled.to_contract()
@@ -133,10 +163,34 @@ def cmd_init(args: argparse.Namespace, out: TextIO) -> int:
             out.write(f'  NOT COMPILED: "{sentence}" -- {why}\n')
         for sentence in compiled.unmatched:
             out.write(f'  NOT COMPILED: "{sentence}" -- not recognised\n')
+        if (compiled.unmatched or compiled.unenforceable) and not args.accept_uncompiled:
+            raise ContractError(
+                "task contains constraints Northstar did not compile; review the lines above, "
+                "then rerun with --accept-uncompiled"
+            )
     else:
+        if not str(args.objective or "").strip():
+            raise ContractError("init needs an objective or --from-task TASK.md")
         contract = default_contract(args.objective)
     if args.behavior:
         contract.constraints["behavior"]["change"] = "forbidden"
+    out.write("northstar init preview\n")
+    out.write(f'  objective: "{contract.objective}"\n')
+    out.write(
+        "  source: task compiler with sentence provenance\n"
+        if compiled is not None
+        else "  source: conservative default profile (the objective was not semantically interpreted)\n"
+    )
+    for line in _contract_summary(contract):
+        out.write(f"  invariant: {line}\n")
+    if args.dry_run:
+        out.write("  dry run: no files, hooks, keys, or authority were written\n")
+        return EXIT_OK
+    target_authority = Authority.for_root(root)
+    if target_authority.path.exists():
+        raise IntegrityError(
+            f"authority already exists at {target_authority.path}; use an approved re-baseline instead"
+        )
     approval_passphrase = prompt_new_approval_secret()
     # Wire the agents *before* freezing, so northstar's own files are part of the
     # baseline rather than showing up as the run's first phantom drift.
@@ -339,6 +393,76 @@ def cmd_install(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def cmd_uninstall(args: argparse.Namespace, out: TextIO) -> int:
+    """Remove managed adapters while preserving unrelated agent configuration."""
+    root = _root(args)
+    targets = args.agent or ["claude", "codex"]
+    if "all" in targets:
+        targets = ["claude", "codex"]
+    authority = Authority.open(root)
+    contract = oracle = None
+    if authority is not None:
+        contract, oracle = authority.load()
+        verdict = policy.evaluate(contract, oracle, root)
+        if verdict.is_blocking:
+            raise IntegrityError(
+                "refusing to uninstall from a drifting tree; resolve `northstar check` first"
+            )
+        request = {
+            "reason": f"uninstall {' and '.join(targets)} adapter(s)",
+            "grants": ["wiring:remove"],
+        }
+        passphrase = interactive_confirmation(request)
+        authority.validate_approval_passphrase(passphrase)
+
+    touched = install_mod.uninstall(root, targets)
+    if authority is not None and contract is not None and oracle is not None:
+        removed = {
+            "claude": {".claude/settings.json", "CLAUDE.md"},
+            "codex": {".codex/hooks.json", ".codex/config.toml", "AGENTS.md"},
+        }
+        remove_paths = set().union(*(removed[target] for target in targets))
+        previous = [str(path) for path in authority.metadata().get("wiring", [])]
+        remaining = [root / path for path in previous if path.replace("\\", "/") not in remove_paths]
+        refreshed = freeze(
+            root,
+            contract.api_scope,
+            capture_behavior=contract.tracks_behavior,
+            behavior_command=contract.behavior_command,
+        )
+        authority.persist(contract, refreshed, wiring=remaining, check_wiring=False)
+        out.write("northstar: clean baseline refreshed after authenticated wiring removal\n")
+    if touched:
+        for path in touched:
+            out.write(f"northstar: removed managed content from {path}\n")
+    else:
+        out.write("northstar: no matching managed adapters were installed\n")
+    out.write("northstar: unrelated agent settings were preserved\n")
+    return EXIT_OK
+
+
+def cmd_doctor(args: argparse.Namespace, out: TextIO) -> int:
+    report = diagnostics.run(_root(args))
+    out.write(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if args.json
+        else diagnostics.render(report) + "\n"
+    )
+    if report["overall"] == "broken" or (args.strict and report["overall"] == "degraded"):
+        return EXIT_BLOCKED
+    return EXIT_OK
+
+
+def cmd_demo(args: argparse.Namespace, out: TextIO) -> int:
+    report = demo.run()
+    out.write(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if args.json
+        else demo.render(report) + "\n"
+    )
+    return EXIT_OK
+
+
 def cmd_hook(args: argparse.Namespace, out: TextIO) -> int:
     payload = adapters.read_payload(args.stdin or sys.stdin)
     # Installed hooks bind an explicit checkout root. The payload cwd remains the
@@ -364,6 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="northstar",
         description="Deterministic invariant enforcement for coding agents.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--root", help="project root (default: nearest .northstar, else cwd)")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -373,6 +498,12 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--behavior", action="store_true", help="also freeze the test suite outcomes")
     init.add_argument("--agent", action="append", choices=["claude", "codex"], help="repeatable")
     init.add_argument("--no-install", action="store_true", help="skip agent wiring")
+    init.add_argument("--dry-run", action="store_true", help="preview the contract without writing")
+    init.add_argument(
+        "--accept-uncompiled",
+        action="store_true",
+        help="continue after reviewing task sentences the compiler could not enforce",
+    )
     init.set_defaults(func=cmd_init)
 
     migrate = sub.add_parser("migrate", help="move an explicitly reviewed v0.1 bundle to R1")
@@ -409,6 +540,13 @@ def build_parser() -> argparse.ArgumentParser:
     live_plan.add_argument("--output", required=True)
     live_plan.set_defaults(func=cmd_live_bench_plan)
 
+    live_preflight = live_sub.add_parser(
+        "preflight", help="verify agents, pinned versions and optional repository commits"
+    )
+    live_preflight.add_argument("study")
+    live_preflight.add_argument("--check-repositories", action="store_true")
+    live_preflight.set_defaults(func=cmd_live_bench_preflight)
+
     live_run = live_sub.add_parser("run", help="execute the study in isolated git clones")
     live_run.add_argument("study")
     live_run.add_argument("--output", required=True)
@@ -431,6 +569,13 @@ def build_parser() -> argparse.ArgumentParser:
     live_analyze.add_argument("--map", required=True)
     live_analyze.add_argument("--output", required=True)
     live_analyze.set_defaults(func=cmd_live_bench_analyze)
+
+    live_report = live_sub.add_parser(
+        "report", help="render a claim-bounded Markdown report from canonical analysis JSON"
+    )
+    live_report.add_argument("report")
+    live_report.add_argument("--output", required=True)
+    live_report.set_defaults(func=cmd_live_bench_report)
 
     fr = sub.add_parser("freeze", help="human-confirmed full re-baseline")
     fr.add_argument("--reason", required=True, help="why the entire baseline is changing")
@@ -464,6 +609,21 @@ def build_parser() -> argparse.ArgumentParser:
     inst = sub.add_parser("install", help="wire hooks for Claude Code and/or Codex")
     inst.add_argument("--agent", action="append", choices=["claude", "codex"])
     inst.set_defaults(func=cmd_install)
+
+    uninstall = sub.add_parser(
+        "uninstall", help="remove Northstar adapters without touching unrelated settings"
+    )
+    uninstall.add_argument("--agent", action="append", choices=["all", "claude", "codex"])
+    uninstall.set_defaults(func=cmd_uninstall)
+
+    doctor = sub.add_parser("doctor", help="verify authority, wiring, agents and hook activity")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--strict", action="store_true", help="treat warnings as a non-zero exit")
+    doctor.set_defaults(func=cmd_doctor)
+
+    demo_parser = sub.add_parser("demo", help="run a disposable end-to-end decision demo")
+    demo_parser.add_argument("--json", action="store_true")
+    demo_parser.set_defaults(func=cmd_demo)
 
     hook = sub.add_parser("hook", help="agent hook entrypoint (reads JSON on stdin)")
     hook.set_defaults(func=cmd_hook, stdin=None)

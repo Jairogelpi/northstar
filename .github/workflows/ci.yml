@@ -30,6 +30,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python: "3.12"
 
     steps:
       - uses: actions/checkout@v7
@@ -92,6 +95,8 @@ jobs:
           /tmp/northstar-smoke/bin/pip install dist/*.whl
           /tmp/northstar-smoke/bin/python -c "import northstar; assert northstar.__version__ == '0.2.0'"
           /tmp/northstar-smoke/bin/northstar --help
+          /tmp/northstar-smoke/bin/northstar demo --json
+          /tmp/northstar-smoke/bin/northstar doctor --json
       - uses: actions/upload-artifact@v7
         with:
           name: distributions

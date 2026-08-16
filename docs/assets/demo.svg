@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="510" viewBox="0 0 1080 510" role="img" aria-labelledby="title desc">
+  <title id="title">Northstar disposable demo</title>
+  <desc id="desc">A terminal showing baseline freeze, denial of a protected test edit, detection of public API drift, and a scoped human approval.</desc>
+  <rect width="1080" height="510" rx="18" fill="#0d1117"/>
+  <rect width="1080" height="52" rx="18" fill="#161b22"/>
+  <rect y="34" width="1080" height="18" fill="#161b22"/>
+  <circle cx="28" cy="26" r="7" fill="#ff5f56"/>
+  <circle cx="52" cy="26" r="7" fill="#ffbd2e"/>
+  <circle cx="76" cy="26" r="7" fill="#27c93f"/>
+  <text x="540" y="32" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="15" fill="#8b949e">northstar demo</text>
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">
+    <text x="32" y="91" fill="#8b949e">$</text>
+    <text x="54" y="91" fill="#f0f6fc">northstar demo</text>
+    <text x="32" y="132" fill="#58a6ff">Northstar disposable demo</text>
+    <text x="32" y="164" fill="#8b949e">Objective: refactor authentication without changing its public API</text>
+    <text x="32" y="210" fill="#3fb950">✓  freeze</text>
+    <text x="224" y="210" fill="#c9d1d9">3 files · 2 public symbols</text>
+    <text x="32" y="252" fill="#f85149">✕  protected test edit</text>
+    <text x="310" y="252" fill="#f85149">DENY</text>
+    <text x="32" y="286" fill="#8b949e">   tests/test_auth.py is protected by `tests/**`</text>
+    <text x="32" y="328" fill="#f85149">✕  whole-tree check</text>
+    <text x="274" y="328" fill="#f85149">DENY</text>
+    <text x="32" y="362" fill="#8b949e">   login(user, password) → login(user, password, tenant)</text>
+    <text x="32" y="404" fill="#3fb950">✓  scoped demo approval</text>
+    <text x="320" y="404" fill="#3fb950">ALLOW</text>
+    <text x="32" y="438" fill="#8b949e">   amendment v2 authorises only src/auth.py::login</text>
+    <text x="32" y="480" fill="#58a6ff">No user files changed — temporary checkout removed.</text>
+  </g>
+</svg>

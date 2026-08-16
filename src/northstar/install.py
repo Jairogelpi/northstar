@@ -178,6 +178,129 @@ def install(root: Path, agents: list[str] | None = None) -> list[Path]:
     return written
 
 
+def _remove_from_groups(groups: list, root: Path) -> tuple[list, bool]:
+    """Remove only this checkout's Northstar command from hook groups."""
+    expected = hook_command(root)
+    kept_groups: list = []
+    changed = False
+    for group in groups:
+        if not isinstance(group, dict):
+            kept_groups.append(group)
+            continue
+        hooks = group.get("hooks")
+        if not isinstance(hooks, list):
+            kept_groups.append(group)
+            continue
+        kept_hooks = [
+            hook
+            for hook in hooks
+            if not (isinstance(hook, dict) and hook.get("command") == expected)
+        ]
+        if len(kept_hooks) == len(hooks):
+            kept_groups.append(group)
+            continue
+        changed = True
+        if kept_hooks:
+            updated = dict(group)
+            updated["hooks"] = kept_hooks
+            kept_groups.append(updated)
+    return kept_groups, changed
+
+
+def _remove_hook_document(path: Path, root: Path, *, codex: bool = False) -> bool:
+    if not path.exists():
+        return False
+    document = _load_json(path)
+    hooks = document.get("hooks")
+    changed = False
+    if isinstance(hooks, dict):
+        hooks = dict(hooks)
+        for event in ("PreToolUse", "PostToolUse"):
+            groups = hooks.get(event)
+            if not isinstance(groups, list):
+                continue
+            kept, removed = _remove_from_groups(groups, root)
+            if removed:
+                changed = True
+                if kept:
+                    hooks[event] = kept
+                else:
+                    hooks.pop(event, None)
+        if hooks:
+            document["hooks"] = hooks
+        else:
+            document.pop("hooks", None)
+    if codex and document.get("description") == "Northstar invariant enforcement hooks.":
+        document.pop("description", None)
+        changed = True
+    if not changed:
+        return False
+    if document:
+        path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    else:
+        path.unlink()
+    return True
+
+
+def remove_agents_block(root: Path, filename: str) -> bool:
+    """Remove only Northstar's managed instructions, preserving user content."""
+    path = Path(root) / filename
+    if not path.exists():
+        return False
+    existing = read_text(path)
+    if AGENTS_BEGIN not in existing or AGENTS_END not in existing:
+        return False
+    head, _, rest = existing.partition(AGENTS_BEGIN)
+    _, _, tail = rest.partition(AGENTS_END)
+    parts = [part.strip("\n") for part in (head.rstrip(), tail.lstrip()) if part.strip()]
+    updated = "\n\n".join(parts)
+    if updated:
+        path.write_text(updated.rstrip() + "\n", encoding="utf-8")
+    else:
+        path.unlink()
+    return True
+
+
+def uninstall_claude(root: Path) -> list[Path]:
+    root = Path(root)
+    touched: list[Path] = []
+    settings = root / ".claude" / "settings.json"
+    if _remove_hook_document(settings, root):
+        touched.append(settings)
+    instructions = root / "CLAUDE.md"
+    if remove_agents_block(root, "CLAUDE.md"):
+        touched.append(instructions)
+    return touched
+
+
+def uninstall_codex(root: Path) -> list[Path]:
+    root = Path(root)
+    touched: list[Path] = []
+    hooks = root / ".codex" / "hooks.json"
+    if _remove_hook_document(hooks, root, codex=True):
+        touched.append(hooks)
+    instructions = root / "AGENTS.md"
+    if remove_agents_block(root, "AGENTS.md"):
+        touched.append(instructions)
+    config = root / ".codex" / "config.toml"
+    before = read_text(config) if config.exists() else None
+    _remove_legacy_codex_notify(root)
+    if before is not None and read_text(config) != before:
+        touched.append(config)
+    return touched
+
+
+def uninstall(root: Path, agents: list[str] | None = None) -> list[Path]:
+    """Remove Northstar's adapters without touching unrelated agent settings."""
+    targets = agents or ["claude", "codex"]
+    touched: list[Path] = []
+    if "claude" in targets:
+        touched.extend(uninstall_claude(root))
+    if "codex" in targets:
+        touched.extend(uninstall_codex(root))
+    return touched
+
+
 def integrity_issues(root: Path, expected: list[str]) -> list[str]:
     """Structural verification of the exact wiring created during ``init``.
 

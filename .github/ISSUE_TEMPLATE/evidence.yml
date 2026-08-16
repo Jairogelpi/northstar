@@ -1,0 +1,40 @@
+name: External evidence contribution
+description: Propose an independent task, evaluation, pilot or contradictory result.
+title: "evidence: "
+labels: ["evidence", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Read EVIDENCE.md first. Do not upload credentials, private code or source that cannot be redistributed.
+  - type: dropdown
+    id: evidence_type
+    attributes:
+      label: Evidence type
+      options:
+        - Independently authored LiveAgentBench task
+        - Independently labelled live-agent result
+        - External repository pilot
+        - Contradictory or negative result
+        - Compiler evaluation example
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Provenance and independence
+      description: Explain who authored the task, who produced labels, and any relationship to Northstar.
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Reproducible artifacts
+      description: Link the manifest, pinned commits/versions, raw artifacts, annotations and analysis where applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Known limitations and failures
+    validations:
+      required: true

@@ -129,10 +129,15 @@ the recorded native trace.
 `capture_contents: true` is required to produce blinded packets. Use only repositories
 whose licences and data policy allow source content in study artifacts.
 
-## Run, blind, label, analyse
+## Preflight, run, blind, label, analyse
+
+Validate the manifest first, then prove that the exact agent binaries and optional
+repository commits are available. Preflight does not execute a task or spend agent
+tokens.
 
 ```bash
 northstar live-bench validate study.yml
+northstar live-bench preflight study.yml --check-repositories
 northstar live-bench plan study.yml --output preregistered-plan.json
 northstar live-bench run study.yml --output live-runs
 northstar live-bench packet live-runs \
@@ -199,7 +204,17 @@ northstar live-bench analyze live-runs \
   --annotations annotations \
   --map private-blinding-map.json \
   --output report.json
+northstar live-bench report report.json --output report.md
 ```
+
+`preflight` returns a non-zero exit unless `git`, every declared agent executable,
+every exact version string, and—when requested—every repository commit checks out. Its
+JSON includes the canonical study hash and planned run count so the environment check
+can be archived beside the preregistration.
+
+`report` is the publication-safe renderer. It refuses analysis that does not declare
+`independent_annotations` as ground truth, shows paired with-minus-without differences
+with 95% intervals, and carries the interpretation boundary into the Markdown output.
 
 The report contains:
 
@@ -225,3 +240,17 @@ The report contains:
 
 This design makes the distinction explicit: Northstar findings are process evidence;
 independent annotations are ground truth.
+
+## Publication bundle
+
+Do not publish only the favourable aggregate table. A reviewable result includes:
+
+- the study manifest, preflight JSON, study hash and preregistered plan;
+- every raw run and native trace permitted by the source licences;
+- blinded outcome packets and frozen outcome annotations;
+- process annotations and the private map released after outcomes are frozen;
+- the machine-readable `report.json` and rendered `report.md`;
+- a plain-language account of failures, timeouts, exclusions and missing observations.
+
+The repository-wide evidence ladder and allowed claim language are defined in
+[`EVIDENCE.md`](../EVIDENCE.md).

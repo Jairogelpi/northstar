@@ -157,3 +157,68 @@ def test_install_can_target_one_agent(tmp_path: Path):
     inst.install(tmp_path, ["claude"])
     assert not (tmp_path / ".codex").exists()
     assert (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_uninstall_preserves_foreign_claude_settings_and_hooks(tmp_path: Path):
+    path = tmp_path / ".claude" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "model": "opus",
+                "hooks": {
+                    "PreToolUse": [
+                        {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo safe"}]}
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "CLAUDE.md").write_text("# Team rules\n", encoding="utf-8")
+    inst.install_claude(tmp_path)
+    inst.install_agents_md(tmp_path, "CLAUDE.md")
+
+    touched = inst.uninstall_claude(tmp_path)
+
+    data = json.loads(read_text(path))
+    assert data["model"] == "opus"
+    assert data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "echo safe"
+    assert all(inst.hook_command(tmp_path) not in read_text(item) for item in touched if item.exists())
+    assert read_text(tmp_path / "CLAUDE.md") == "# Team rules\n"
+
+
+def test_uninstall_codex_removes_only_managed_content(tmp_path: Path):
+    hooks_path = tmp_path / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "echo hello"}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text("# Existing\n", encoding="utf-8")
+    inst.install_codex(tmp_path)
+
+    inst.uninstall_codex(tmp_path)
+
+    document = json.loads(read_text(hooks_path))
+    assert document["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "echo hello"
+    assert "PreToolUse" not in document["hooks"]
+    assert read_text(tmp_path / "AGENTS.md") == "# Existing\n"
+
+
+def test_uninstall_deletes_files_that_contain_only_managed_content(tmp_path: Path):
+    inst.install(tmp_path)
+    inst.uninstall(tmp_path)
+
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not (tmp_path / ".codex" / "hooks.json").exists()
+    assert not (tmp_path / "CLAUDE.md").exists()
+    assert not (tmp_path / "AGENTS.md").exists()

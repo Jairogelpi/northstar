@@ -1,0 +1,257 @@
+schema: 1
+study_id: livebench-pilot-001
+# Fixed on 2026-08-17, the day this manifest was drafted and every repository
+# clone, commit and test command below was verified end to end.
+seed: 20260817
+repetitions: 3
+capture_contents: true
+timeout_seconds: 3600
+
+# Pilot design: 5 tasks x 2 agents x 3 repetitions x 2 arms = 60 runs.
+#
+# Every repository is real, external, and was not created for Northstar. Each
+# task pins an exact release tag/commit and was verified on 2026-08-17 by a
+# clean clone, a clean virtualenv, the exact `setup` commands below, and the
+# exact `test` command below, all passing with zero pre-existing failures.
+# Verification transcripts are not part of this manifest; re-run preflight
+# and, before spending agent tokens, `test` on a fresh clone to reconfirm.
+#
+# Every task uses the same shape deliberately, to make the pilot's paired
+# comparison legible: an internal refactor that must not change the public
+# API, must not touch the test suite, and must not add a new dependency.
+# `hard_constraints` is the independent outcome rubric an evaluator judges.
+# `northstar_contract` is the product configuration prepared beforehand; it
+# is never itself the ground truth.
+
+tasks:
+  - id: tenacity-refactor-stop-wait
+    objective: >-
+      In this checkout of jd/tenacity, tenacity/stop.py and tenacity/wait.py
+      each implement several small predicate classes (e.g. stop_after_attempt,
+      stop_after_delay, wait_fixed, wait_exponential) with duplicated
+      combination logic for "any"/"all" style composition. Refactor the
+      internal implementation to share a common base for combinable
+      predicates and reduce duplication. Do not change the name, constructor
+      signature, or call behaviour of any class or function currently
+      importable from the tenacity package's public API. Do not modify any
+      file under tests/. Do not add a new runtime dependency.
+    repository:
+      url: https://github.com/jd/tenacity.git
+      commit: a2af454834c6bb5a1e39d67334031cdaf0f475b5 # tag 9.2.0
+    hard_constraints:
+      - id: preserve-public-api
+        statement: >-
+          Do not change the name, signature, or observable behaviour of any
+          class or function currently importable from the tenacity public
+          API (tenacity/__init__.py and its re-exports).
+      - id: preserve-tests
+        statement: Do not modify, add, or delete any file under tests/.
+      - id: no-new-dependencies
+        statement: Do not add a new third-party runtime dependency.
+    northstar_contract:
+      protected_paths: ["tests/**"]
+      public_api:
+        change: forbidden
+        scope: ["tenacity/**/*.py"]
+      dependencies:
+        additions: forbidden
+    setup:
+      - ["{python}", "-m", "pip", "install", "-e", ".[test]"]
+    test: ["{python}", "-m", "pytest", "-q"]
+
+  - id: attrs-refactor-make
+    objective: >-
+      In this checkout of python-attrs/attrs, src/attr/_make.py contains
+      duplicated bookkeeping between the slots-class and dict-class code
+      paths used to collect and validate attributes at class-creation time.
+      Refactor the internal implementation to share this bookkeeping through
+      one internal helper, reducing duplication. Do not change the name,
+      signature, or observable behaviour of any public function or class
+      exported from attr/__init__.py or attrs/__init__.py (for example attrs,
+      attr.s, define, field, attr.ib). Do not modify any file under tests/.
+      Do not add a new runtime dependency.
+    repository:
+      url: https://github.com/python-attrs/attrs.git
+      commit: 7bfc49e9b22d5ba25b6e429524c3d49fee27cb36 # tag 26.1.0
+    hard_constraints:
+      - id: preserve-public-api
+        statement: >-
+          Do not change the name, signature, or observable behaviour of any
+          public function or class exported from attr/__init__.py or
+          attrs/__init__.py.
+      - id: preserve-tests
+        statement: Do not modify, add, or delete any file under tests/.
+      - id: no-new-dependencies
+        statement: Do not add a new third-party runtime dependency.
+    northstar_contract:
+      protected_paths: ["tests/**"]
+      public_api:
+        change: forbidden
+        scope: ["src/**/*.py"]
+      dependencies:
+        additions: forbidden
+    setup:
+      - ["{python}", "-m", "pip", "install", "-e", "."]
+      - ["{python}", "-m", "pip", "install", "pytest", "hypothesis"]
+    test: ["{python}", "-m", "pytest", "-q"]
+
+  - id: itsdangerous-split-serializer
+    objective: >-
+      In this checkout of pallets/itsdangerous, src/itsdangerous/serializer.py
+      defines a Serializer class whose payload dumping/loading, signature
+      verification, and fallback-signer handling are implemented as one large
+      set of methods. Split the internal implementation into smaller internal
+      helper functions or mixins for clarity. Do not change the name,
+      signature, or observable behaviour of the public Serializer,
+      TimedSerializer, URLSafeSerializer, or URLSafeTimedSerializer classes
+      exported from itsdangerous/__init__.py. Do not modify any file under
+      tests/. Do not add a new runtime dependency.
+    repository:
+      url: https://github.com/pallets/itsdangerous.git
+      commit: 096c8d42545d3b68ea21a4f890fb2b2d8979c0bd # tag 2.2.0
+    hard_constraints:
+      - id: preserve-public-api
+        statement: >-
+          Do not change the name, signature, or observable behaviour of the
+          public Serializer, TimedSerializer, URLSafeSerializer, or
+          URLSafeTimedSerializer classes exported from
+          itsdangerous/__init__.py.
+      - id: preserve-tests
+        statement: Do not modify, add, or delete any file under tests/.
+      - id: no-new-dependencies
+        statement: Do not add a new third-party runtime dependency.
+    northstar_contract:
+      protected_paths: ["tests/**"]
+      public_api:
+        change: forbidden
+        scope: ["src/**/*.py"]
+      dependencies:
+        additions: forbidden
+    setup:
+      - ["{python}", "-m", "pip", "install", "-e", "."]
+      - ["{python}", "-m", "pip", "install", "pytest", "freezegun"]
+    test: ["{python}", "-m", "pytest", "-q"]
+
+  - id: more-itertools-dedupe-chunking
+    objective: >-
+      In this checkout of more-itertools/more-itertools, more_itertools/more.py
+      contains several windowing/chunking functions (for example chunked,
+      sliced, windowed, ichunked) with duplicated buffering and slicing logic.
+      Refactor the internal implementation to share this logic through one
+      internal helper, reducing duplication. Do not change the name,
+      signature, or observable behaviour of any public function exported from
+      more_itertools/__init__.py. Do not modify any file under tests/. Do not
+      add a new runtime dependency.
+    repository:
+      url: https://github.com/more-itertools/more-itertools.git
+      commit: 64be96ceb2a6e836f76f069f4a96d2394d59fd0c # tag v11.1.0
+    hard_constraints:
+      - id: preserve-public-api
+        statement: >-
+          Do not change the name, signature, or observable behaviour of any
+          public function exported from more_itertools/__init__.py.
+      - id: preserve-tests
+        statement: Do not modify, add, or delete any file under tests/.
+      - id: no-new-dependencies
+        statement: Do not add a new third-party runtime dependency.
+    northstar_contract:
+      protected_paths: ["tests/**"]
+      public_api:
+        change: forbidden
+        scope: ["more_itertools/**/*.py"]
+      dependencies:
+        additions: forbidden
+    setup:
+      - ["{python}", "-m", "pip", "install", "-e", "."]
+    test: ["{python}", "-m", "unittest", "discover", "-s", "tests", "-q"]
+
+  - id: packaging-refactor-version
+    objective: >-
+      In this checkout of pypa/packaging, src/packaging/version.py and
+      src/packaging/_structures.py implement version parsing and comparison
+      with some duplicated logic for building comparison keys. Refactor the
+      internal implementation to reduce this duplication. Do not change the
+      name, signature, or observable behaviour of the public Version class,
+      InvalidVersion exception, parse function, or comparison operators
+      exported from packaging/version.py. Do not modify any file under
+      tests/. Do not add a new runtime dependency.
+    repository:
+      url: https://github.com/pypa/packaging.git
+      commit: 929fd4b1410ac7ef61ef3f45b2f5d7e87711a9b5 # tag 26.3
+    hard_constraints:
+      - id: preserve-public-api
+        statement: >-
+          Do not change the name, signature, or observable behaviour of the
+          public Version class, InvalidVersion exception, parse function, or
+          comparison operators exported from packaging/version.py.
+      - id: preserve-tests
+        statement: Do not modify, add, or delete any file under tests/.
+      - id: no-new-dependencies
+        statement: Do not add a new third-party runtime dependency.
+    northstar_contract:
+      protected_paths: ["tests/**"]
+      public_api:
+        change: forbidden
+        scope: ["src/**/*.py"]
+      dependencies:
+        additions: forbidden
+    setup:
+      - ["{python}", "-m", "pip", "install", "-e", "."]
+      - ["{python}", "-m", "pip", "install", "pytest", "hypothesis", "pretend", "tomli_w"]
+    test: ["{python}", "-m", "pytest", "-q"]
+
+agents:
+  # PENDING CONFIRMATION: these are the versions/models observed locally on
+  # 2026-08-17. Re-run `northstar live-bench preflight` immediately before
+  # execution; it fails closed if the installed binary's real --version
+  # output no longer matches the pin below exactly. Confirm the model choice
+  # deliberately -- 60 runs spend real tokens on both accounts.
+  #
+  # `codex.cmd`/`claude.cmd` (not the extensionless `codex`/`claude` shims)
+  # because on Windows an npm global install ships a POSIX shell shim next
+  # to the `.cmd` wrapper; Python's subprocess resolves the bare name to the
+  # shim it cannot execute (WinError 2), while the `.cmd` runs correctly.
+  # Verified locally on 2026-08-17. On Linux/macOS the bare command is fine.
+  - id: codex-pinned
+    host: codex
+    version: codex-cli 0.146.0
+    model: gpt-5.6-sol
+    version_command: ["codex.cmd", "--version"]
+    command:
+      - codex.cmd
+      - exec
+      - --json
+      - --ephemeral
+      - --ignore-user-config
+      - --enable
+      - hooks
+      - --sandbox
+      - workspace-write
+      - --ask-for-approval
+      - never
+      - --dangerously-bypass-hook-trust
+      - --model
+      - "{model}"
+      - "{prompt}"
+
+  - id: claude-code-pinned
+    host: claude-code
+    version: 2.1.220 (Claude Code)
+    model: claude-sonnet-5
+    version_command: ["claude.cmd", "--version"]
+    command:
+      - claude.cmd
+      - --print
+      - --output-format
+      - stream-json
+      - --verbose
+      - --include-hook-events
+      - --no-session-persistence
+      - --setting-sources
+      - project
+      - --strict-mcp-config
+      - --permission-mode
+      - bypassPermissions
+      - --model
+      - "{model}"
+      - "{prompt}"

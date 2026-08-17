@@ -1,0 +1,58 @@
+{
+  "checks": [
+    {
+      "detail": "C:\\Program Files\\Git\\mingw64\\bin\\git.EXE",
+      "id": "git",
+      "kind": "executable",
+      "status": "pass"
+    },
+    {
+      "detail": "version 'codex-cli 0.146.0' matches the manifest",
+      "id": "codex-pinned",
+      "kind": "agent",
+      "status": "pass"
+    },
+    {
+      "detail": "version '2.1.220 (Claude Code)' matches the manifest",
+      "id": "claude-code-pinned",
+      "kind": "agent",
+      "status": "pass"
+    },
+    {
+      "detail": "declared commit is fetchable",
+      "id": "tenacity-refactor-stop-wait",
+      "kind": "repository",
+      "status": "pass"
+    },
+    {
+      "detail": "declared commit is fetchable",
+      "id": "attrs-refactor-make",
+      "kind": "repository",
+      "status": "pass"
+    },
+    {
+      "detail": "declared commit is fetchable",
+      "id": "itsdangerous-split-serializer",
+      "kind": "repository",
+      "status": "pass"
+    },
+    {
+      "detail": "declared commit is fetchable",
+      "id": "more-itertools-dedupe-chunking",
+      "kind": "repository",
+      "status": "pass"
+    },
+    {
+      "detail": "declared commit is fetchable",
+      "id": "packaging-refactor-version",
+      "kind": "repository",
+      "status": "pass"
+    }
+  ],
+  "failed_checks": 0,
+  "planned_runs": 60,
+  "ready": true,
+  "schema": 1,
+  "study_id": "livebench-pilot-001",
+  "study_sha256": "d9d042657f9f56cc428073af64050d22f415720e9fe19a1550c5dfd158a13453"
+}

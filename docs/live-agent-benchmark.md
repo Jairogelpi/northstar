@@ -95,8 +95,6 @@ agents:
       - hooks
       - --sandbox
       - workspace-write
-      - --ask-for-approval
-      - never
       - --dangerously-bypass-hook-trust
       - --model
       - "{model}"

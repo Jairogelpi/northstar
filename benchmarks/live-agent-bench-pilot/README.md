@@ -37,6 +37,28 @@ beforehand and is never itself the ground truth (see
 | `more-itertools-dedupe-chunking` | [more-itertools/more-itertools](https://github.com/more-itertools/more-itertools) | `v11.1.0` |
 | `packaging-refactor-version` | [pypa/packaging](https://github.com/pypa/packaging) | `26.3` |
 
+## Mid-execution correction (2026-08-17)
+
+Execution started, then surfaced two real problems that changed `study.yml` and
+therefore its `study_sha256`:
+
+1. **`--ask-for-approval never` is not a valid `codex exec` flag** in codex-cli
+   0.146.0 -- that subcommand is already non-interactive. Every `codex-pinned` run
+   attempted before this fix failed in 1-4 seconds with exit code 2, before the
+   model was ever invoked. Those runs were deleted; they are not in the recorded
+   data. The flag was removed here and in the two places it was copied from
+   (`docs/live-agent-benchmark.md`, `examples/live-agent-bench/study.example.yml`),
+   since any user following that documentation would hit the same bug.
+2. **The Codex account is over its usage limit.** `codex exec` reported
+   `You've hit your usage limit ... try again at Aug 20th, 2026 9:38 PM` on a
+   correctly-formed invocation. This is an account limit, not a bug; `codex-pinned`
+   runs cannot proceed until it resets.
+
+`claude-code-pinned` was not affected by either issue. Its 30 runs (5 tasks x 3
+repetitions x 2 arms) are running independently of `codex-pinned`'s 30; pairing in
+`analyze` is per-agent (`pair_id` includes `agent_id`), so completing one agent's
+full paired set before the other is valid and does not need to be re-run.
+
 ## Known Windows shim issue (fixed in this manifest)
 
 An npm global install of Codex/Claude Code on Windows ships an extensionless POSIX

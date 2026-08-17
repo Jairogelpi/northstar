@@ -212,6 +212,18 @@ agents:
   # to the `.cmd` wrapper; Python's subprocess resolves the bare name to the
   # shim it cannot execute (WinError 2), while the `.cmd` runs correctly.
   # Verified locally on 2026-08-17. On Linux/macOS the bare command is fine.
+  #
+  # 2026-08-17 mid-execution correction: `--ask-for-approval never` is not a
+  # valid `codex exec` flag in codex-cli 0.146.0 (that subcommand is already
+  # non-interactive). Every codex-pinned run before this edit failed in 1-4s
+  # with exit code 2, before the model was ever invoked; those runs were
+  # deleted and are not part of the recorded data. Removed the flag here and
+  # in docs/live-agent-benchmark.md and examples/live-agent-bench/study.example.yml,
+  # which had the same bug. Separately, the account behind gpt-5.6-sol hit its
+  # Codex usage limit on this date; codex-pinned runs resume once that
+  # resets (observed reset: 2026-08-20 ~21:38 UTC-ish, per the CLI's own
+  # message -- reconfirm before resuming). claude-code-pinned is unaffected
+  # and its 30 runs are not blocked by either issue.
   - id: codex-pinned
     host: codex
     version: codex-cli 0.146.0
@@ -227,8 +239,6 @@ agents:
       - hooks
       - --sandbox
       - workspace-write
-      - --ask-for-approval
-      - never
       - --dangerously-bypass-hook-trust
       - --model
       - "{model}"
